@@ -1,0 +1,7 @@
+interface:
+  display_name: "Claude Fresh Review"
+  short_description: "Fresh-eyes review for small-project diffs and artifacts"
+  default_prompt: "Use $claude-fresh-review to review the current diff or artifact with a pragmatic, thorough small-project rubric."
+
+policy:
+  allow_implicit_invocation: true

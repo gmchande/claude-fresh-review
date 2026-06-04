@@ -1,24 +1,26 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 require "optparse"
 require "shellwords"
-require "fileutils"
-require "json"
+require "tmpdir"
 
 MAX_UNTRACKED_BYTES = 200_000
 CLAUDE_MODEL = "claude-opus-4-8"
 CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "high")
+CLAUDE_PERMISSION_MODE = "bypassPermissions"
 CLAUDE_REVIEW_TOOLS = "Read,Grep,Glob,Bash,WebSearch,WebFetch"
+CLAUDE_BYPASS_WARNING_MARKERS = ["Bypass", "Permissions", "Yes", "accept"].freeze
+CLAUDE_READY_MARKERS = ["Claude Code", "❯"].freeze
 
 options = {
   base: nil,
   intent: nil,
-  output: nil,
   plan: nil,
-  timeout: 600,
-  dry_run: false
+  dry_run: false,
+  zellij_session: nil
 }
 
 parser = OptionParser.new do |opts|
@@ -27,8 +29,7 @@ parser = OptionParser.new do |opts|
   opts.on("--base REF", "Review branch changes against REF") { |value| options[:base] = value }
   opts.on("--intent TEXT", "Short description of what changed and why") { |value| options[:intent] = value }
   opts.on("--plan PATH", "Include a plan/PRD file as review context") { |value| options[:plan] = value }
-  opts.on("--output PATH", "Write Claude's review to PATH as well as stdout") { |value| options[:output] = value }
-  opts.on("--timeout SECONDS", Integer, "Stop Claude if review exceeds SECONDS (default: 600)") { |value| options[:timeout] = value }
+  opts.on("--zellij-session NAME", "Create this one-off visible Zellij session name") { |value| options[:zellij_session] = value }
   opts.on("--dry-run", "Print the prompt bundle instead of calling Claude") { options[:dry_run] = true }
   opts.on("-h", "--help", "Show this help") do
     puts opts
@@ -95,70 +96,6 @@ def read_plan(path)
   File.read(path)
 end
 
-def run_claude_review(system_prompt, payload, timeout_seconds)
-  timed_out = false
-
-  Open3.popen3(
-    "claude",
-    "-p",
-    "--no-session-persistence",
-    "--model",
-    CLAUDE_MODEL,
-    "--effort",
-    CLAUDE_EFFORT,
-    "--tools",
-    CLAUDE_REVIEW_TOOLS,
-    "--allowedTools",
-    CLAUDE_REVIEW_TOOLS,
-    "--append-system-prompt",
-    system_prompt,
-    "--output-format",
-    "json"
-  ) do |stdin, stdout, stderr, wait_thread|
-    stdin.write(payload)
-    stdin.close
-
-    stdout_reader = Thread.new { stdout.read }
-    stderr_reader = Thread.new { stderr.read }
-
-    if wait_thread.join(timeout_seconds)
-      return [stdout_reader.value, stderr_reader.value, wait_thread.value, false]
-    end
-
-    timed_out = true
-    begin
-      Process.kill("TERM", wait_thread.pid)
-    rescue Errno::ESRCH
-      # Process already exited between timeout detection and signal delivery.
-    end
-
-    sleep 2
-
-    if wait_thread.alive?
-      begin
-        Process.kill("KILL", wait_thread.pid)
-      rescue Errno::ESRCH
-        # Process already exited after TERM.
-      end
-    end
-
-    wait_thread.join
-    [stdout_reader.value, stderr_reader.value, wait_thread.value, timed_out]
-  end
-end
-
-def extract_review_text(stdout)
-  parsed = JSON.parse(stdout)
-  events = parsed.is_a?(Array) ? parsed : [parsed]
-  result_event = events.reverse.find { |event| event.is_a?(Hash) && event["type"] == "result" }
-
-  return [result_event["result"].to_s, result_event] if result_event
-
-  [stdout, nil]
-rescue JSON::ParserError
-  [stdout, nil]
-end
-
 def untracked_file_section(path)
   if !likely_text_file?(path)
     "### #{path}\n\nSkipped: not a readable text file.\n"
@@ -200,6 +137,214 @@ def untracked_bundle
 
     #{sections.join("\n")}
   TEXT
+end
+
+def slug(value)
+  value.to_s.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-|-+\z/, "")[0, 60]
+end
+
+def default_prompt_file(repo_root)
+  repo_slug = slug(File.basename(repo_root))
+  stamp = Time.now.utc.strftime("%Y%m%d-%H%M%S")
+  File.join(Dir.tmpdir, "claude-fresh-review", "#{stamp}-#{repo_slug}-review.md")
+end
+
+def default_system_prompt_file(prompt_path)
+  return prompt_path.sub(/\.md\z/, "-system.md") if prompt_path.end_with?(".md")
+
+  "#{prompt_path}-system.md"
+end
+
+def write_prompt_bundle(payload, repo_root)
+  path = default_prompt_file(repo_root)
+  FileUtils.mkdir_p(File.dirname(path)) unless File.dirname(path) == "."
+  File.write(path, payload)
+  path
+end
+
+def write_system_prompt(system_prompt, prompt_path)
+  path = default_system_prompt_file(prompt_path)
+  File.write(path, system_prompt)
+  path
+end
+
+def zellij_session_name(options)
+  return options[:zellij_session] if options[:zellij_session]
+
+  "cfr-#{Time.now.utc.strftime("%H%M%S")}"
+end
+
+def claude_interactive_shell_cmd(system_prompt_path)
+  cmd = [
+    "claude",
+    "--model",
+    CLAUDE_MODEL,
+    "--effort",
+    CLAUDE_EFFORT,
+    "--permission-mode",
+    CLAUDE_PERMISSION_MODE,
+    "--tools",
+    CLAUDE_REVIEW_TOOLS,
+    "--allowedTools",
+    CLAUDE_REVIEW_TOOLS
+  ]
+
+  "#{cmd.shelljoin} --append-system-prompt \"$(cat #{system_prompt_path.shellescape})\""
+end
+
+def zellij(*args, allow_failure: false)
+  stdout, stderr, status = run("zellij", *args, allow_failure: true)
+
+  if !status.success? && !allow_failure
+    warn "Command failed: #{(["zellij"] + args).shelljoin}"
+    warn stderr unless stderr.empty?
+    exit status.exitstatus || 1
+  end
+
+  [stdout, stderr, status]
+end
+
+def zellij_session_exists?(session)
+  stdout, _stderr, status = zellij("list-sessions", "--short", allow_failure: true)
+  return false unless status.success?
+
+  stdout.lines.map(&:strip).include?(session)
+end
+
+def zellij_dump_screen(session, pane_id, full: false)
+  # Readiness checks must ignore scrollback; old bypass warnings can remain in `--full` output.
+  args = [
+    "--session",
+    session,
+    "action",
+    "dump-screen",
+    "--pane-id",
+    pane_id
+  ]
+  args << "--full" if full
+
+  stdout, _stderr, status = zellij(*args, allow_failure: true)
+  return stdout if status.success?
+
+  ""
+end
+
+def bypass_warning_screen?(screen)
+  CLAUDE_BYPASS_WARNING_MARKERS.all? { |marker| screen.include?(marker) }
+end
+
+def claude_ready_screen?(screen)
+  CLAUDE_READY_MARKERS.all? { |marker| screen.include?(marker) } && !bypass_warning_screen?(screen)
+end
+
+def accept_zellij_bypass_warning(session, pane_id)
+  warn "Claude bypass-permissions startup screen detected; selecting Yes, I accept."
+  zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "2", "Enter")
+end
+
+def wait_for_zellij_claude_prompt(session, pane_id, timeout_seconds: 30)
+  deadline = Time.now + timeout_seconds
+
+  until Time.now > deadline
+    screen = zellij_dump_screen(session, pane_id)
+    if bypass_warning_screen?(screen)
+      accept_zellij_bypass_warning(session, pane_id)
+      sleep 1
+      next
+    end
+
+    return true if claude_ready_screen?(screen)
+
+    sleep 0.5
+  end
+
+  warn "Claude pane did not show a ready prompt within #{timeout_seconds}s; not sending the review task."
+  warn "Inspect it with: zellij --session #{session.shellescape} action dump-screen --pane-id #{pane_id.shellescape} --full"
+  false
+end
+
+def zellij_write_text(session, pane_id, text)
+  text.each_char.each_slice(8_000) do |chars|
+    zellij("--session", session, "action", "write-chars", "--pane-id", pane_id, chars.join)
+  end
+end
+
+def run_zellij_review(system_prompt, payload, repo_root, options)
+  unless command_available?("zellij")
+    warn "Zellij is required for claude-fresh-review. Install it with `brew install zellij` and rerun this command."
+    exit 1
+  end
+
+  unless command_available?("claude")
+    warn "Claude Code CLI not found on PATH."
+    exit 1
+  end
+
+  session = zellij_session_name(options)
+  if zellij_session_exists?(session)
+    warn "Zellij session already exists: #{session}"
+    warn "claude-fresh-review sessions are one-off; choose a new --zellij-session name or close the old session first."
+    exit 1
+  end
+
+  prompt_path = write_prompt_bundle(payload, repo_root)
+  system_prompt_path = write_system_prompt(system_prompt, prompt_path)
+
+  _stdout, stderr, status = zellij("attach", "--create-background", session, allow_failure: true)
+  unless status.success?
+    warn "Failed to create Zellij background session: #{session}"
+    warn stderr unless stderr.empty?
+    exit status.exitstatus || 1
+  end
+
+  stdout, stderr, status = zellij(
+    "--session",
+    session,
+    "run",
+    "--cwd",
+    repo_root,
+    "--name",
+    "Claude Fresh Review",
+    "--",
+    "sh",
+    "-lc",
+    claude_interactive_shell_cmd(system_prompt_path),
+    allow_failure: true
+  )
+
+  unless status.success?
+    warn "Failed to create Zellij Claude pane in session: #{session}"
+    warn stderr unless stderr.empty?
+    exit status.exitstatus || 1
+  end
+
+  pane_id = stdout.strip
+  if pane_id.empty?
+    warn "Zellij did not return a pane id; cannot safely send the review task."
+    exit 1
+  end
+
+  exit 1 unless wait_for_zellij_claude_prompt(session, pane_id)
+
+  zellij("--session", session, "action", "focus-pane-id", pane_id)
+  zellij_write_text(session, pane_id, payload)
+  sleep 2
+  zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "Enter")
+
+  puts "Claude review prompt sent to Zellij session: #{session}"
+  puts "Zellij pane: #{pane_id}"
+  puts "Prompt bundle: #{prompt_path}"
+  puts "System prompt: #{system_prompt_path}"
+  puts
+  puts "Watch:"
+  puts "zellij attach #{session.shellescape}"
+  puts
+  puts "Inspect from Codex/shell:"
+  puts "zellij --session #{session.shellescape} action dump-screen --pane-id #{pane_id.shellescape} --full"
+  puts
+  puts "Interrupt:"
+  puts "zellij --session #{session.shellescape} action send-keys --pane-id #{pane_id.shellescape} Esc"
+  puts "zellij --session #{session.shellescape} action send-keys --pane-id #{pane_id.shellescape} \"Ctrl c\""
 end
 
 unless inside_git_repo?
@@ -301,6 +446,8 @@ PROMPT
 if options[:dry_run]
   puts "Claude model: #{CLAUDE_MODEL}"
   puts "Claude effort: #{CLAUDE_EFFORT}"
+  puts "Permission mode: #{CLAUDE_PERMISSION_MODE}"
+  puts "Runner: visible Zellij session"
   puts "Claude tools: #{CLAUDE_REVIEW_TOOLS}"
   puts
   puts "## Appended system prompt"
@@ -311,37 +458,4 @@ if options[:dry_run]
   exit 0
 end
 
-unless command_available?("claude")
-  warn "Claude Code CLI not found on PATH."
-  exit 1
-end
-
-stdout, stderr, status, timed_out = run_claude_review(reviewer_persona, payload, options[:timeout])
-warn stderr unless stderr.empty?
-
-if timed_out
-  warn "Claude review timed out after #{options[:timeout]} seconds."
-  exit 124
-end
-
-unless status.success?
-  warn "Claude review failed."
-  exit status.exitstatus || 1
-end
-
-review_text, metadata = extract_review_text(stdout)
-
-if metadata && metadata["is_error"]
-  warn "Claude review returned an error result: #{metadata["subtype"] || "unknown"}"
-  error_details = review_text.empty? ? Array(metadata["errors"]).join("\n") : review_text
-  error_details = stdout if error_details.empty?
-  warn error_details unless error_details.empty?
-  exit 1
-end
-
-puts review_text
-
-if options[:output]
-  FileUtils.mkdir_p(File.dirname(options[:output])) unless File.dirname(options[:output]) == "."
-  File.write(options[:output], review_text)
-end
+run_zellij_review(reviewer_persona, payload, repo_root, options)

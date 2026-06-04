@@ -2,7 +2,7 @@
 
 A Codex skill that asks Claude Code for a fresh-eyes review of the current git diff or project artifact.
 
-The intended workflow is simple: use Codex for planning and implementation, then use Claude Code as an independent reviewer before you keep moving. The review posture is pragmatic and thorough for serious small projects: catch correctness bugs, broken flows, data loss, security footguns, unclear plans, brittle workflow assumptions, and poor fit with the existing project style without drifting into enterprise hardening or speculative architecture review.
+The intended workflow is simple: use Codex for planning and implementation, then launch Claude Code in a visible Zellij session as an independent reviewer before you keep moving. The review posture is pragmatic and thorough for serious small projects: catch correctness bugs, broken flows, data loss, security footguns, unclear plans, brittle workflow assumptions, and poor fit with the existing project style without drifting into enterprise hardening or speculative architecture review.
 
 ## What it does
 
@@ -11,9 +11,10 @@ The intended workflow is simple: use Codex for planning and implementation, then
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`.
 - Accepts plan, PRD, or artifact context with `--plan`.
 - Accepts conversation-level intent with `--intent`.
-- Runs Claude Code with `claude-opus-4-8`, high effort by default, and a 10-minute timeout.
+- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, high effort, and `--permission-mode bypassPermissions` by default.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
-- Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access. Use it for trusted local repos and artifacts.
+- Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
+- Prints the exact attach, inspect, and interrupt commands for the Zellij session.
 
 ## Install
 
@@ -36,6 +37,7 @@ chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review/scripts/claude_
 - Ruby
 - Git
 - Claude Code CLI on `PATH`
+- Zellij 0.44+ on `PATH`
 - Optional: GitHub CLI, used only to infer the PR base branch when available
 
 ## Usage
@@ -64,11 +66,34 @@ Use less effort for trivial diffs:
 CLAUDE_REVIEW_EFFORT=medium ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Mechanical rename"
 ```
 
+Use an explicit one-off session name:
+
+```sh
+~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb \
+  --zellij-session feature-review \
+  --intent "Review the current diff"
+```
+
 Inspect the prompt bundle without calling Claude:
 
 ```sh
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --dry-run --intent "Check prompt"
 ```
+
+## Runtime Behavior
+
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, writes the assembled review task, presses Enter, and prints commands like:
+
+```sh
+zellij attach feature-review
+zellij --session feature-review action dump-screen --pane-id terminal_0 --full
+zellij --session feature-review action send-keys --pane-id terminal_0 Esc
+zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
+```
+
+If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run or close the old session first.
+
+The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. It does not parse a final review from JSON stdout; Codex should inspect Claude's terminal output and verify every finding against the actual repo.
 
 ## Review posture
 

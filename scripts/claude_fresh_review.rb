@@ -281,6 +281,44 @@ def zellij_write_text(session, pane_id, text)
   end
 end
 
+def applescript_string(value)
+  "\"#{value.to_s.gsub("\\", "\\\\\\").gsub('"', '\\"')}\""
+end
+
+def command_path(name)
+  stdout, _stderr, status = run("sh", "-c", "command -v #{Shellwords.escape(name)}", allow_failure: true)
+  return stdout.strip if status.success? && !stdout.strip.empty?
+
+  name
+end
+
+def open_ghostty_attach(session, repo_root)
+  attach_inner = "#{command_path("zellij").shellescape} attach #{session.shellescape}; exec /bin/zsh -l"
+  attach_command = "/bin/zsh -lc #{Shellwords.escape(attach_inner)}"
+
+  script = <<~APPLESCRIPT
+    tell application "Ghostty"
+      set cfg to new surface configuration
+      set initial working directory of cfg to #{applescript_string(repo_root)}
+      set command of cfg to #{applescript_string(attach_command)}
+      set wait after command of cfg to true
+      if (count of windows) > 0 then
+        set newTab to new tab in front window with configuration cfg
+        select tab newTab
+      else
+        set newWin to new window with configuration cfg
+      end if
+      activate
+    end tell
+  APPLESCRIPT
+
+  _stdout, stderr, status = Open3.capture3("osascript", stdin_data: script)
+  return if status.success?
+
+  warn "Failed to open Ghostty attached to Zellij session: #{session}"
+  warn stderr unless stderr.empty?
+end
+
 def run_zellij_review(system_prompt, payload, repo_root, options)
   unless command_available?("zellij")
     warn "Zellij is required for claude-fresh-review. Install it with `brew install zellij` and rerun this command."
@@ -343,6 +381,7 @@ def run_zellij_review(system_prompt, payload, repo_root, options)
   zellij_write_text(session, pane_id, payload)
   sleep 2
   zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "Enter")
+  open_ghostty_attach(session, repo_root)
 
   puts "Claude review prompt sent to Zellij session: #{session}"
   puts "Zellij pane: #{pane_id}"

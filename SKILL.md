@@ -7,7 +7,7 @@ description: Run a fresh-eyes Claude Code review of the current git diff using a
 
 Use this skill to ask Claude Code for an independent review after Codex has planned or implemented changes, or when a repo artifact such as a plan, design document, workflow instruction, or agent/tooling configuration needs fresh eyes.
 
-The helper launches Claude in a new, one-off visible Zellij session with local inspection, `Bash`, `WebSearch`, and `WebFetch` so it can inspect the repo, run relevant checks, and verify official docs. It does not grant `Edit` or `Write`, but `Bash` is still shell access and runs with `--permission-mode bypassPermissions`; use this helper only for trusted local repos and artifacts. If the requested Zellij session name already exists, the helper exits instead of reusing it.
+The helper launches Claude in a new, one-off visible Zellij session with local inspection, `Bash`, `WebSearch`, and `WebFetch` so it can inspect the repo, run relevant checks, and verify official docs. It opens a Ghostty tab attached to that Zellij session after sending the review task. It does not grant `Edit` or `Write`, but `Bash` is still shell access and runs with `--permission-mode bypassPermissions`; use this helper only for trusted local repos and artifacts. If the requested Zellij session name already exists, the helper exits instead of reusing it.
 
 It pins Claude to `claude-opus-4-8` and defaults to `--effort high`. Set `CLAUDE_REVIEW_EFFORT=medium` or `CLAUDE_REVIEW_EFFORT=low` for trivial or mechanical diffs. The stable reviewer instructions are passed with `--append-system-prompt`; the repo status, diff, plan, and intent are sent as the user payload.
 
@@ -48,7 +48,7 @@ scripts/claude_fresh_review.rb --zellij-session feature-review
 scripts/claude_fresh_review.rb --dry-run
 ```
 
-The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...`, starts Claude in Zellij, waits for the Claude prompt, accepts the bypass-permissions startup responsibility screen if it appears, sends the review task, and prints attach/inspect/interrupt commands. Codex should inspect Claude's terminal output and verify every finding against the real repo before accepting it.
+The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...`, starts Claude in Zellij, waits for the Claude prompt, accepts the bypass-permissions startup responsibility screen if it appears, sends the review task, opens Ghostty attached to the session, and prints attach/inspect/interrupt commands. Codex should inspect Claude's terminal output and verify every finding against the real repo before accepting it.
 
 ## After Claude responds
 

@@ -14,7 +14,7 @@ The intended workflow is simple: use Codex for planning and implementation, then
 - Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, high effort, and `--permission-mode bypassPermissions` by default.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
-- Prints the exact attach, inspect, and interrupt commands for the Zellij session.
+- Opens a Ghostty tab attached to the Zellij session and prints the exact attach, inspect, and interrupt commands.
 
 ## Install
 
@@ -38,6 +38,7 @@ chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review/scripts/claude_
 - Git
 - Claude Code CLI on `PATH`
 - Zellij 0.44+ on `PATH`
+- Ghostty.app installed in `/Applications`
 - Optional: GitHub CLI, used only to infer the PR base branch when available
 
 ## Usage
@@ -82,7 +83,7 @@ Inspect the prompt bundle without calling Claude:
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, writes the assembled review task, presses Enter, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, writes the assembled review task, presses Enter, opens a Ghostty tab attached to the session, and prints commands like:
 
 ```sh
 zellij attach feature-review

@@ -6,14 +6,13 @@ require "open3"
 require "optparse"
 require "shellwords"
 require "tmpdir"
+require_relative "claude_visible_session"
 
 MAX_UNTRACKED_BYTES = 200_000
 CLAUDE_MODEL = "claude-opus-4-8"
 CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "high")
 CLAUDE_PERMISSION_MODE = "bypassPermissions"
 CLAUDE_REVIEW_TOOLS = "Read,Grep,Glob,Bash,WebSearch,WebFetch"
-CLAUDE_BYPASS_WARNING_MARKERS = ["Bypass", "Permissions", "Yes", "accept"].freeze
-CLAUDE_READY_MARKERS = ["Claude Code", "❯"].freeze
 
 options = {
   base: nil,
@@ -192,211 +191,24 @@ def claude_interactive_shell_cmd(system_prompt_path)
   "#{cmd.shelljoin} --append-system-prompt \"$(cat #{system_prompt_path.shellescape})\""
 end
 
-def zellij(*args, allow_failure: false)
-  stdout, stderr, status = run("zellij", *args, allow_failure: true)
-
-  if !status.success? && !allow_failure
-    warn "Command failed: #{(["zellij"] + args).shelljoin}"
-    warn stderr unless stderr.empty?
-    exit status.exitstatus || 1
-  end
-
-  [stdout, stderr, status]
-end
-
-def zellij_session_exists?(session)
-  stdout, _stderr, status = zellij("list-sessions", "--short", allow_failure: true)
-  return false unless status.success?
-
-  stdout.lines.map(&:strip).include?(session)
-end
-
-def zellij_dump_screen(session, pane_id, full: false)
-  # Readiness checks must ignore scrollback; old bypass warnings can remain in `--full` output.
-  args = [
-    "--session",
-    session,
-    "action",
-    "dump-screen",
-    "--pane-id",
-    pane_id
-  ]
-  args << "--full" if full
-
-  stdout, _stderr, status = zellij(*args, allow_failure: true)
-  return stdout if status.success?
-
-  ""
-end
-
-def close_other_terminal_panes(session, pane_id)
-  stdout, _stderr, status = zellij("--session", session, "action", "list-panes", allow_failure: true)
-  return unless status.success?
-
-  stdout.each_line do |line|
-    other_pane_id = line[/\A(terminal_\d+)\s+terminal\b/, 1]
-    next if other_pane_id.nil? || other_pane_id == pane_id
-
-    zellij("--session", session, "action", "close-pane", "--pane-id", other_pane_id, allow_failure: true)
-  end
-end
-
-def bypass_warning_screen?(screen)
-  CLAUDE_BYPASS_WARNING_MARKERS.all? { |marker| screen.include?(marker) }
-end
-
-def claude_ready_screen?(screen)
-  CLAUDE_READY_MARKERS.all? { |marker| screen.include?(marker) } && !bypass_warning_screen?(screen)
-end
-
-def accept_zellij_bypass_warning(session, pane_id)
-  warn "Claude bypass-permissions startup screen detected; selecting Yes, I accept."
-  zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "2", "Enter")
-end
-
-def wait_for_zellij_claude_prompt(session, pane_id, timeout_seconds: 30)
-  deadline = Time.now + timeout_seconds
-
-  until Time.now > deadline
-    screen = zellij_dump_screen(session, pane_id)
-    if bypass_warning_screen?(screen)
-      accept_zellij_bypass_warning(session, pane_id)
-      sleep 1
-      next
-    end
-
-    return true if claude_ready_screen?(screen)
-
-    sleep 0.5
-  end
-
-  warn "Claude pane did not show a ready prompt within #{timeout_seconds}s; not sending the review task."
-  warn "Inspect it with: zellij --session #{session.shellescape} action dump-screen --pane-id #{pane_id.shellescape} --full"
-  false
-end
-
-def zellij_write_text(session, pane_id, text)
-  text.each_char.each_slice(8_000) do |chars|
-    zellij("--session", session, "action", "write-chars", "--pane-id", pane_id, "--", chars.join)
-  end
-end
-
-def applescript_string(value)
-  "\"#{value.to_s.gsub("\\", "\\\\\\").gsub('"', '\\"')}\""
-end
-
-def command_path(name)
-  stdout, _stderr, status = run("sh", "-c", "command -v #{Shellwords.escape(name)}", allow_failure: true)
-  return stdout.strip if status.success? && !stdout.strip.empty?
-
-  name
-end
-
-def open_ghostty_attach(session, repo_root)
-  attach_inner = "#{command_path("zellij").shellescape} attach #{session.shellescape}; exec /bin/zsh -l"
-  attach_command = "/bin/zsh -lc #{Shellwords.escape(attach_inner)}"
-
-  script = <<~APPLESCRIPT
-    tell application "Ghostty"
-      set cfg to new surface configuration
-      set initial working directory of cfg to #{applescript_string(repo_root)}
-      set command of cfg to #{applescript_string(attach_command)}
-      set wait after command of cfg to true
-      if (count of windows) > 0 then
-        set newTab to new tab in front window with configuration cfg
-        select tab newTab
-      else
-        set newWin to new window with configuration cfg
-      end if
-      activate
-    end tell
-  APPLESCRIPT
-
-  _stdout, stderr, status = Open3.capture3("osascript", stdin_data: script)
-  return if status.success?
-
-  warn "Failed to open Ghostty attached to Zellij session: #{session}"
-  warn stderr unless stderr.empty?
-end
-
 def run_zellij_review(system_prompt, payload, repo_root, options)
-  unless command_available?("zellij")
-    warn "Zellij is required for claude-fresh-review. Install it with `brew install zellij` and rerun this command."
-    exit 1
-  end
-
-  unless command_available?("claude")
-    warn "Claude Code CLI not found on PATH."
-    exit 1
-  end
-
   session = zellij_session_name(options)
-  if zellij_session_exists?(session)
-    warn "Zellij session already exists: #{session}"
-    warn "claude-fresh-review sessions are one-off; choose a new --zellij-session name or close the old session first."
-    exit 1
-  end
-
   prompt_path = write_prompt_bundle(payload, repo_root)
   system_prompt_path = write_system_prompt(system_prompt, prompt_path)
+  cmd = claude_interactive_shell_cmd(system_prompt_path)
 
-  _stdout, stderr, status = zellij("attach", "--create-background", session, allow_failure: true)
-  unless status.success?
-    warn "Failed to create Zellij background session: #{session}"
-    warn stderr unless stderr.empty?
-    exit status.exitstatus || 1
-  end
-
-  stdout, stderr, status = zellij(
-    "--session",
-    session,
-    "run",
-    "--cwd",
-    repo_root,
-    "--name",
-    "Claude Fresh Review",
-    "--",
-    "sh",
-    "-lc",
-    claude_interactive_shell_cmd(system_prompt_path),
-    allow_failure: true
+  ClaudeVisibleSession.run_session(
+    skill_name: "claude-fresh-review",
+    session: session,
+    repo_root: repo_root,
+    pane_name: "Claude Fresh Review",
+    claude_shell_command: cmd,
+    prompt_text: payload,
+    prompt_path: prompt_path,
+    system_prompt_path: system_prompt_path,
+    prompt_label: "review task",
+    sent_message: "Claude review prompt sent to Zellij session"
   )
-
-  unless status.success?
-    warn "Failed to create Zellij Claude pane in session: #{session}"
-    warn stderr unless stderr.empty?
-    exit status.exitstatus || 1
-  end
-
-  pane_id = stdout.strip
-  if pane_id.empty?
-    warn "Zellij did not return a pane id; cannot safely send the review task."
-    exit 1
-  end
-
-  close_other_terminal_panes(session, pane_id)
-  exit 1 unless wait_for_zellij_claude_prompt(session, pane_id)
-
-  zellij("--session", session, "action", "focus-pane-id", pane_id)
-  zellij_write_text(session, pane_id, payload)
-  sleep 2
-  zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "Enter")
-  open_ghostty_attach(session, repo_root)
-
-  puts "Claude review prompt sent to Zellij session: #{session}"
-  puts "Zellij pane: #{pane_id}"
-  puts "Prompt bundle: #{prompt_path}"
-  puts "System prompt: #{system_prompt_path}"
-  puts
-  puts "Watch:"
-  puts "zellij attach #{session.shellescape}"
-  puts
-  puts "Inspect from Codex/shell:"
-  puts "zellij --session #{session.shellescape} action dump-screen --pane-id #{pane_id.shellescape} --full"
-  puts
-  puts "Interrupt:"
-  puts "zellij --session #{session.shellescape} action send-keys --pane-id #{pane_id.shellescape} Esc"
-  puts "zellij --session #{session.shellescape} action send-keys --pane-id #{pane_id.shellescape} \"Ctrl c\""
 end
 
 unless inside_git_repo?

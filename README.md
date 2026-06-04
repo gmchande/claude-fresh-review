@@ -38,7 +38,8 @@ chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review/scripts/claude_
 - Git
 - Claude Code CLI on `PATH`
 - Zellij 0.44+ on `PATH`
-- Ghostty.app installed in `/Applications`
+- Ghostty.app installed and registered with macOS
+- `ZELLIJ_SOCKET_DIR` set in shell startup to a short stable path such as `/tmp/zellij`
 - Optional: GitHub CLI, used only to infer the PR base branch when available
 
 ## Usage
@@ -83,7 +84,7 @@ Inspect the prompt bundle without calling Claude:
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, writes the assembled review task, presses Enter, opens a Ghostty tab attached to the session, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, opens a Ghostty tab attached to the session, writes the assembled review task, presses Enter, and prints commands like:
 
 ```sh
 zellij attach feature-review
@@ -92,9 +93,9 @@ zellij --session feature-review action send-keys --pane-id terminal_0 Esc
 zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 ```
 
-If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run or close the old session first.
+If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. It does not parse a final review from JSON stdout; Codex should inspect Claude's terminal output and verify every finding against the actual repo.
+The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should inspect Claude's terminal output and verify every finding against the actual repo.
 
 ## Review posture
 

@@ -68,6 +68,12 @@ Use less effort for trivial diffs:
 CLAUDE_REVIEW_EFFORT=medium ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Mechanical rename"
 ```
 
+Test another Claude model deliberately:
+
+```sh
+CLAUDE_REVIEW_MODEL=claude-sonnet-4-6 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Review the current diff"
+```
+
 Use an explicit one-off session name:
 
 ```sh
@@ -84,22 +90,23 @@ Inspect the prompt bundle without calling Claude:
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, opens a Ghostty tab attached to the session, writes the assembled review task, presses Enter, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, opens a Ghostty tab attached to the session, bracket-pastes the assembled review task, presses Enter, and prints commands like:
 
 ```sh
 zellij attach feature-review
-zellij --session feature-review action dump-screen --pane-id terminal_0 --full
+zellij --session feature-review action dump-screen --pane-id terminal_0
+zellij --session feature-review action dump-screen --pane-id terminal_0 --full --path /tmp/claude-fresh-review-feature-review.screen.txt
 zellij --session feature-review action send-keys --pane-id terminal_0 Esc
 zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 ```
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should inspect Claude's terminal output and verify every finding against the actual repo.
+The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch live, avoid continuous pane polling, and verify every finding against the actual repo after Claude completes or at bounded checkpoints.
 
 ## Review posture
 
-The skill asks Claude to verify correctness, completeness, and solidity for the stated purpose. When you pass a plan or intent, Claude is asked to critique the plan itself, not only whether the diff follows it. A perfectly executed wrong plan is still a review finding.
+The skill asks Claude to report concrete behavioral findings with severity and confidence. Codex should verify and filter those findings against the real repo. When you pass a plan or intent, Claude is asked to critique the plan itself, not only whether the diff follows it. A perfectly executed wrong plan is still a review finding.
 
 ## License
 

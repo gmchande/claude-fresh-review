@@ -9,7 +9,7 @@ require "tmpdir"
 require_relative "claude_visible_session"
 
 MAX_UNTRACKED_BYTES = 200_000
-CLAUDE_MODEL = "claude-opus-4-8"
+CLAUDE_MODEL = ENV.fetch("CLAUDE_REVIEW_MODEL", "claude-opus-4-8")
 CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "high")
 CLAUDE_PERMISSION_MODE = "bypassPermissions"
 CLAUDE_REVIEW_TOOLS = "Read,Grep,Glob,Bash,WebSearch,WebFetch"
@@ -185,10 +185,12 @@ def claude_interactive_shell_cmd(system_prompt_path)
     "--tools",
     CLAUDE_REVIEW_TOOLS,
     "--allowedTools",
-    CLAUDE_REVIEW_TOOLS
+    CLAUDE_REVIEW_TOOLS,
+    "--append-system-prompt-file",
+    system_prompt_path
   ]
 
-  "#{cmd.shelljoin} --append-system-prompt \"$(cat #{system_prompt_path.shellescape})\""
+  cmd.shelljoin
 end
 
 def run_zellij_review(system_prompt, payload, repo_root, options)
@@ -261,21 +263,24 @@ end
 reviewer_persona = <<~PROMPT
   You are reviewing a git diff or supplied project artifact with fresh eyes after another agent planned or changed it.
 
-  Review posture:
+  Goal:
+  - Find issues that would make the changed code, plan, document, workflow, or agent/tooling setup incorrect, brittle, misleading, unsafe, or poorly fit to the stated intent.
+  - Codex will verify and filter your findings afterward, so surface plausible behavioral issues with severity and confidence instead of silently dropping them.
+
+  Scope:
   - Be pragmatic and thorough for a serious small experiment, repo workflow, plan, design document, or agent-OS configuration.
-  - Verify correctness, completeness, and solidity for the stated purpose.
   - First infer what kind of artifact this is: code, plan/PRD, design review, documentation, workflow instructions, or agent/tooling setup. Apply the relevant standard rather than forcing a code-only review.
   - Look for correctness bugs, broken user flows, data loss, privacy/security footguns, confusing structure, missing essential checks, instruction conflicts, unclear ownership, brittle workflow assumptions, and poor fit with the existing project style.
   - For plans and documents, focus on clarity, internal consistency, missing decisions, executable next steps, ambiguous scope, and whether the review is balanced for the stated stakes.
   - When a plan or intent is supplied, critique the plan itself as well as whether the diff follows it; a perfectly executed wrong plan is still a review finding.
-  - Prefer concrete, high-confidence findings with small scoped fixes.
+  - Report bugs that could cause incorrect behavior, failed checks, misleading output, unsafe side effects, or broken workflows.
   - Do not review like a principal engineer hardening a large SaaS product for millions of users.
-  - Avoid speculative scale concerns, broad rewrites, purity refactors, needless abstraction, and "this might matter someday" findings.
+  - Omit pure style nits, speculative scale concerns, broad rewrites, purity refactors, needless abstraction, and "this might matter someday" findings.
   - If there are no actionable findings, say that clearly.
 
   Output format:
   - Findings first, ordered by severity.
-  - For each finding, include file/line or section references when possible, why it matters, and the smallest reasonable fix.
+  - For each finding, include file/line or section references when possible, severity, confidence, why it matters, and the smallest reasonable fix.
   - Then include a short "Checks / validation I would run" section.
   - Then include "Noise / non-issues" only if you intentionally rejected tempting but over-engineered concerns.
   - Do not edit files.

@@ -78,10 +78,12 @@ module ClaudeVisibleSession
 
     zellij("--session", session, "action", "focus-pane-id", pane_id)
     unless open_ghostty_attach(session, repo_root)
-      delete_zellij_session(session)
+      warn "Leaving ready Zellij session open without sending the #{prompt_label}."
+      warn "Attach manually with: #{zellij_shell_command("attach", session)}"
       exit 1
     end
 
+    sleep 1
     paste_text(session, pane_id, prompt_text)
     sleep 2
     zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "Enter")
@@ -94,8 +96,14 @@ module ClaudeVisibleSession
     puts "Watch:"
     puts zellij_shell_command("attach", session)
     puts
-    puts "Inspect from Codex/shell:"
-    puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full")
+    puts "Codex observation policy:"
+    puts "Let the user watch in Zellij/Ghostty. Do not repeatedly poll the pane; inspect only on request, at a bounded checkpoint, on apparent completion, or to verify a concrete finding."
+    puts
+    puts "Quick inspect (viewport only):"
+    puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)
+    puts
+    puts "Full transcript (diagnostic only, writes to a temp file):"
+    puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full", "--path", diagnostic_screen_path(skill_name, session))
     puts
     puts "Interrupt:"
     puts zellij_shell_command("--session", session, "action", "send-keys", "--pane-id", pane_id, "Esc")
@@ -122,7 +130,12 @@ module ClaudeVisibleSession
       exit 1
     end
 
-    FileUtils.mkdir_p(socket_dir)
+    begin
+      FileUtils.mkdir_p(socket_dir)
+    rescue SystemCallError => e
+      warn "Could not create ZELLIJ_SOCKET_DIR #{socket_dir.inspect}: #{e.message}"
+      exit 1
+    end
   end
 
   def run_command(*cmd, allow_failure: false)
@@ -218,15 +231,21 @@ module ClaudeVisibleSession
     end
 
     warn "Claude pane did not show a ready prompt within #{READY_TIMEOUT_SECONDS}s; not sending the #{prompt_label}."
-    warn "Inspect it with: #{zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full")}"
+    warn "Inspect it with: #{zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)}"
     false
   end
 
   def paste_text(session, pane_id, text)
-    # Bracketed paste keeps diff syntax like @@ and /-prefixed lines literal.
+    # Bracketed paste keeps embedded newlines and line-leading command syntax literal.
     text.each_char.each_slice(PASTE_CHUNK_SIZE) do |chars|
       zellij("--session", session, "action", "paste", "--pane-id", pane_id, "--", chars.join)
     end
+  end
+
+  def diagnostic_screen_path(skill_name, session)
+    skill_part = skill_name.downcase.gsub(/[^a-z0-9]+/, "-").gsub(/\A-+|-+\z/, "")
+    session_part = session.gsub(/[^A-Za-z0-9_.-]/, "_")
+    "/tmp/#{skill_part}-#{session_part}.screen.txt"
   end
 
   def applescript_string(value)
@@ -241,7 +260,8 @@ module ClaudeVisibleSession
   end
 
   def open_ghostty_attach(session, repo_root)
-    attach_inner = "#{command_path("zellij").shellescape} attach #{session.shellescape}; exec /bin/zsh -l"
+    attach_inner = "export ZELLIJ_SOCKET_DIR=#{ENV.fetch("ZELLIJ_SOCKET_DIR").shellescape}; " \
+                   "#{command_path("zellij").shellescape} attach #{session.shellescape}; exec /bin/zsh -l"
     attach_command = "/bin/zsh -lc #{Shellwords.escape(attach_inner)}"
 
     script = <<~APPLESCRIPT

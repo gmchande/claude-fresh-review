@@ -70,6 +70,14 @@ def inside_git_repo?
   status.success?
 end
 
+def head_exists?
+  git_ref_exists?("HEAD")
+end
+
+def empty_tree_ref
+  git("hash-object", "-t", "tree", "/dev/null").strip
+end
+
 def likely_text_file?(path)
   File.file?(path) && !File.binread(path, 4096).include?("\x00")
 rescue Errno::ENOENT, Errno::EACCES
@@ -211,9 +219,16 @@ unless options[:plan] || options[:intent]
 end
 
 if dirty
-  target_label = "working tree against HEAD"
-  diff_stat = git("diff", "--stat", "HEAD", "--")
-  diff_body = git("diff", "--no-ext-diff", "HEAD", "--")
+  if head_exists?
+    comparison_ref = "HEAD"
+    target_label = "working tree against HEAD"
+  else
+    comparison_ref = empty_tree_ref
+    target_label = "working tree against empty tree (unborn branch; no HEAD commit yet)"
+  end
+
+  diff_stat = git("diff", "--stat", comparison_ref, "--")
+  diff_body = git("diff", "--no-ext-diff", comparison_ref, "--")
   untracked = untracked_bundle
 else
   base = options[:base] || current_branch_base

@@ -7,6 +7,7 @@ The intended workflow is simple: use Codex for planning and implementation, then
 ## What it does
 
 - Reviews a dirty working tree against `HEAD`, including untracked text files.
+- Reviews new experiment repos before the first commit by comparing tracked changes to Git's empty tree and bundling untracked text files.
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`.
 - Accepts plan, PRD, or artifact context with `--plan`.
 - Accepts conversation-level intent with `--intent`.

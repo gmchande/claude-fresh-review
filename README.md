@@ -11,7 +11,7 @@ The intended workflow is simple: use Codex for planning and implementation, then
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`.
 - Accepts plan, PRD, or artifact context with `--plan`.
 - Accepts conversation-level intent with `--intent`.
-- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, high effort, and `--permission-mode bypassPermissions` by default.
+- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, xhigh effort, and `--permission-mode bypassPermissions` by default.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
 - Opens a Ghostty tab attached to the Zellij session and prints the exact attach, inspect, and interrupt commands.
@@ -62,7 +62,7 @@ Review already-committed work:
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --base HEAD~1
 ```
 
-Use less effort for trivial diffs:
+Use less effort for simpler diffs:
 
 ```sh
 CLAUDE_REVIEW_EFFORT=medium ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Mechanical rename"
@@ -102,7 +102,7 @@ zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...` so the exact task remains inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch live, avoid continuous pane polling, and verify every finding against the actual repo after Claude completes or at bounded checkpoints.
+The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under `/tmp/claude-fresh-review/...` so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch live, poll the printed done marker cheaply when completion matters, read the handoff once, avoid continuous pane polling, and verify every finding against the actual repo.
 
 ## Review posture
 

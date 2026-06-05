@@ -9,7 +9,7 @@ Use this skill to ask Claude Code for an independent review after Codex has plan
 
 The helper launches Claude in a new, one-off visible Zellij session with local inspection, `Bash`, `WebSearch`, and `WebFetch` so it can inspect the repo, run relevant checks, and verify official docs. It opens a Ghostty tab attached to that Zellij session before sending the review task. It does not grant `Edit` or `Write`, but `Bash` is still shell access and runs with `--permission-mode bypassPermissions`; use this helper only for trusted local repos and artifacts. If the requested Zellij session name already exists, the helper exits instead of reusing it.
 
-It defaults Claude to `claude-opus-4-8` and `--effort high`. Set `CLAUDE_REVIEW_MODEL` only when intentionally testing another Claude model; set `CLAUDE_REVIEW_EFFORT=medium` or `CLAUDE_REVIEW_EFFORT=low` for trivial or mechanical diffs. The stable reviewer instructions are passed with Claude Code's file-based appended system prompt flag; the repo status, diff, plan, and intent are sent as the user payload.
+It defaults Claude to `claude-opus-4-8` and `--effort xhigh`. Set `CLAUDE_REVIEW_MODEL` only when intentionally testing another Claude model; set `CLAUDE_REVIEW_EFFORT=high`, `medium`, or `low` for simpler diffs. The stable reviewer instructions are passed with Claude Code's file-based appended system prompt flag; the repo status, diff, plan, and intent are sent as the user payload.
 
 ## Review posture
 
@@ -48,9 +48,9 @@ scripts/claude_fresh_review.rb --zellij-session feature-review
 scripts/claude_fresh_review.rb --dry-run
 ```
 
-The helper writes the assembled prompt bundle and system prompt to `/tmp/claude-fresh-review/...`, starts Claude in Zellij, waits for the Claude prompt, accepts the bypass-permissions startup responsibility screen if it appears, opens Ghostty attached to the session, bracket-pastes the review task, and prints attach/inspect/interrupt commands. `ZELLIJ_SOCKET_DIR` must be set in shell startup to a short stable path such as `/tmp/zellij`; if it is missing, the helper exits instead of creating a hidden alternate namespace.
+The helper writes the assembled prompt bundle, system prompt, handoff path, and done marker under `/tmp/claude-fresh-review/...`, starts Claude in Zellij, waits for the Claude prompt, accepts the bypass-permissions startup responsibility screen if it appears, opens Ghostty attached to the session, bracket-pastes the review task, and prints attach/inspect/interrupt commands. `ZELLIJ_SOCKET_DIR` must be set in shell startup to a short stable path such as `/tmp/zellij`; if it is missing, the helper exits instead of creating a hidden alternate namespace.
 
-Observation policy: after launching Claude visibly, Codex should let the user be the live observer and should not continuously poll the pane. Inspect only on explicit user request, apparent completion, a bounded checkpoint, or to verify a concrete finding. Prefer `zellij list-sessions --short` for liveness and viewport-only `dump-screen` with small output caps. Avoid repeated `dump-screen --full` polling; use full transcript dumps only as diagnostics, preferably written to a temp file. Codex should still verify every Claude finding against the real repo before accepting it.
+Observation policy: after launching Claude visibly, Codex should let the user be the live observer and should not continuously poll the pane. When Codex needs completion, poll the printed done marker cheaply and read the handoff file once it exists. Inspect the pane only on explicit user request, a bounded checkpoint, or to verify a concrete finding. Prefer `zellij list-sessions --short` for liveness and viewport-only `dump-screen` with small output caps. Avoid repeated `dump-screen --full` polling; use full transcript dumps only as diagnostics, preferably written to a temp file. Codex should still verify every Claude finding against the real repo before accepting it.
 
 ## After Claude responds
 

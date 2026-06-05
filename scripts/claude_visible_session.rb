@@ -76,10 +76,16 @@ module ClaudeVisibleSession
       exit 1
     end
 
+    handoff_path = default_handoff_path(prompt_path)
+    done_marker_path = default_done_marker_path(prompt_path)
+    FileUtils.rm_f([handoff_path, done_marker_path])
+    prompt_text = with_completion_handoff(prompt_text, handoff_path, done_marker_path)
+    File.write(prompt_path, prompt_text)
+
     zellij("--session", session, "action", "focus-pane-id", pane_id)
     unless open_ghostty_attach(session, repo_root)
-      warn "Leaving ready Zellij session open without sending the #{prompt_label}."
-      warn "Attach manually with: #{zellij_shell_command("attach", session)}"
+      warn "Failed to open the visible Ghostty attach tab; not sending the #{prompt_label} invisibly."
+      delete_zellij_session(session)
       exit 1
     end
 
@@ -92,12 +98,17 @@ module ClaudeVisibleSession
     puts "Zellij pane: #{pane_id}"
     puts "Prompt bundle: #{prompt_path}"
     puts "System prompt: #{system_prompt_path}"
+    puts "Handoff file: #{handoff_path}"
+    puts "Done marker: #{done_marker_path}"
     puts
     puts "Watch:"
     puts zellij_shell_command("attach", session)
     puts
+    puts "Completion check:"
+    puts "test -f #{done_marker_path.shellescape} && sed -n '1,220p' #{handoff_path.shellescape}"
+    puts
     puts "Codex observation policy:"
-    puts "Let the user watch in Zellij/Ghostty. Do not repeatedly poll the pane; inspect only on request, at a bounded checkpoint, on apparent completion, or to verify a concrete finding."
+    puts "Let the user watch in Zellij/Ghostty. Poll the done marker cheaply when needed; inspect the pane only on request, at a bounded checkpoint, or to verify a concrete finding."
     puts
     puts "Quick inspect (viewport only):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)
@@ -240,6 +251,40 @@ module ClaudeVisibleSession
     text.each_char.each_slice(PASTE_CHUNK_SIZE) do |chars|
       zellij("--session", session, "action", "paste", "--pane-id", pane_id, "--", chars.join)
     end
+  end
+
+  def with_completion_handoff(text, handoff_path, done_marker_path)
+    <<~TEXT
+      #{text}
+
+      ## Completion Handoff
+
+      At the end of the run, write your final handoff to:
+
+      ```text
+      #{handoff_path}
+      ```
+
+      Then create this done marker as your final filesystem action:
+
+      ```text
+      #{done_marker_path}
+      ```
+
+      The handoff file should contain the same final findings or implementation summary you print in the terminal. If you are blocked, still write the handoff file with the blocker and then create the done marker.
+    TEXT
+  end
+
+  def default_handoff_path(prompt_path)
+    return prompt_path.sub(/\.md\z/, "-handoff.md") if prompt_path.end_with?(".md")
+
+    "#{prompt_path}-handoff.md"
+  end
+
+  def default_done_marker_path(prompt_path)
+    return prompt_path.sub(/\.md\z/, ".done") if prompt_path.end_with?(".md")
+
+    "#{prompt_path}.done"
   end
 
   def diagnostic_screen_path(skill_name, session)

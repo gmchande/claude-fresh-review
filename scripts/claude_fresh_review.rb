@@ -94,7 +94,11 @@ def read_plan(path)
     exit 1
   end
 
-  File.read(path)
+  text = File.read(path)
+  truncated, was_truncated = truncate_text(text, MAX_DIFF_BYTES, "plan")
+  return truncated unless was_truncated
+
+  "#{truncated}\n\nPlan was truncated at #{MAX_DIFF_BYTES} bytes; inspect the real file before relying on missing context."
 end
 
 def untracked_file_section(path)

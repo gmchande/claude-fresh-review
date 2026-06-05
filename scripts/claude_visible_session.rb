@@ -34,6 +34,14 @@ module ClaudeVisibleSession
       exit 1
     end
 
+    handoff_path = default_handoff_path(prompt_path)
+    done_marker_path = default_done_marker_path(prompt_path)
+    FileUtils.rm_f([handoff_path, done_marker_path])
+    File.open(system_prompt_path, "a") do |file|
+      file.write("\n")
+      file.write(completion_handoff_instructions(handoff_path, done_marker_path))
+    end
+
     _stdout, stderr, status = zellij("attach", "--create-background", session, allow_failure: true)
     unless status.success?
       warn "Failed to create Zellij background session: #{session}"
@@ -76,12 +84,6 @@ module ClaudeVisibleSession
       exit 1
     end
 
-    handoff_path = default_handoff_path(prompt_path)
-    done_marker_path = default_done_marker_path(prompt_path)
-    FileUtils.rm_f([handoff_path, done_marker_path])
-    prompt_text = with_completion_handoff(prompt_text, handoff_path, done_marker_path)
-    File.write(prompt_path, prompt_text)
-
     zellij("--session", session, "action", "focus-pane-id", pane_id)
     unless open_ghostty_attach(session, repo_root)
       warn "Failed to open the visible Ghostty attach tab; not sending the #{prompt_label} invisibly."
@@ -105,10 +107,10 @@ module ClaudeVisibleSession
     puts zellij_shell_command("attach", session)
     puts
     puts "Completion check:"
-    puts "test -f #{done_marker_path.shellescape} && sed -n '1,220p' #{handoff_path.shellescape}"
+    puts "test -f #{done_marker_path.shellescape} && cat #{handoff_path.shellescape}"
     puts
     puts "Codex observation policy:"
-    puts "Let the user watch in Zellij/Ghostty. Poll the done marker cheaply when needed; inspect the pane only on request, at a bounded checkpoint, or to verify a concrete finding."
+    puts "Let the user watch in Zellij/Ghostty. First marker check should be after 2-3 minutes; inspect the pane only on request, at a bounded checkpoint, or to verify a concrete finding."
     puts
     puts "Quick inspect (viewport only):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)
@@ -253,10 +255,8 @@ module ClaudeVisibleSession
     end
   end
 
-  def with_completion_handoff(text, handoff_path, done_marker_path)
+  def completion_handoff_instructions(handoff_path, done_marker_path)
     <<~TEXT
-      #{text}
-
       ## Completion Handoff
 
       At the end of the run, write your final handoff to:

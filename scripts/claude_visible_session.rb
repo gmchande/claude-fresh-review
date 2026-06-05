@@ -271,7 +271,7 @@ module ClaudeVisibleSession
       #{done_marker_path}
       ```
 
-      The handoff file should contain the same final findings or implementation summary you print in the terminal. If you are blocked, still write the handoff file with the blocker and then create the done marker.
+      The handoff file should contain the same final findings or implementation summary you print in the terminal. Writing the handoff and done-marker files under /tmp is expected and is not a repo edit. If you are blocked, still write the handoff file with the blocker and then create the done marker.
     TEXT
   end
 

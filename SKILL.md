@@ -54,6 +54,13 @@ Observation policy: after launching Claude visibly, Codex should let the user be
 
 ## After Claude responds
 
+- Before editing anything, give Gaurav a brief, plain triage summary:
+  - What Claude found.
+  - Which findings Codex agrees with.
+  - Why each accepted finding is real or important.
+  - Which findings Codex rejects or treats as low-priority noise, and why.
+  - What Codex plans to do next.
+- Keep this summary short but readable. It should be a decision checkpoint, not a second full review.
 - Verify each finding against the real code before accepting it.
 - Fix only concrete, in-scope issues.
 - Briefly reject noisy, speculative, or over-engineered findings.

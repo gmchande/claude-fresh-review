@@ -1,38 +1,46 @@
 ---
 name: claude-fresh-review
-description: Run a fresh-eyes Claude Code review of the current git diff using a pragmatic, thorough small-project rubric. Use when the user asks for Claude review, fresh eyes, second opinion, review this diff, check Codex's work, or a balanced non-enterprise code review.
+description: Run an independent Claude Code review of the current diff, plan, or repo artifact, then force Codex to triage before editing. Use when the user asks for Claude review, fresh eyes, second opinion, review this diff, check Codex's work, or a balanced non-enterprise code review.
 ---
 
 # Claude Fresh Review
 
-Use this skill to ask Claude Code for an independent review after Codex has planned or implemented changes, or when a repo artifact such as a plan, design document, workflow instruction, or agent/tooling configuration needs fresh eyes.
+Use this skill to get a fresh-eyes review from Claude Code without turning Claude into the decision-maker. Claude is another agent: it may miss main-session context, over-engineer, or be wrong. Codex must treat the review as input to evaluate, not authority to execute.
 
-The helper launches Claude in a new, one-off visible Zellij session with local inspection, `Bash`, `WebSearch`, and `WebFetch` so it can inspect the repo, run relevant checks, and verify official docs. It opens a Ghostty tab attached to that Zellij session before sending the review task. It does not grant `Edit` or `Write`, but `Bash` is still shell access and runs with `--permission-mode bypassPermissions`; use this helper only for trusted local repos and artifacts. If the requested Zellij session name already exists, the helper exits instead of reusing it.
+## Hard Gate
 
-It defaults Claude to `claude-opus-4-8` and `--effort xhigh`. Set `CLAUDE_REVIEW_MODEL` only when intentionally testing another Claude model; set `CLAUDE_REVIEW_EFFORT=high`, `medium`, or `low` for simpler diffs. The stable reviewer instructions are passed with Claude Code's file-based appended system prompt flag; the repo status, diff, plan, and intent are sent as the user payload.
+This is a review workflow first. After Claude responds, Codex must verify, summarize, and stop for Gaurav's approval before changing files.
 
-## Review posture
+Before the triage checkpoint is sent and Gaurav approves implementation, do not call `apply_patch`, run formatters/generators/autofixers, stage, commit, push, or otherwise modify repo files.
 
-Ask for a pragmatic, thorough review suitable for serious small projects, experiments, plans, design documents, repo workflows, and agent/tooling setup:
+Allowed before the checkpoint: `git diff`, `rg`, `sed`, `nl`, non-writing test dry-runs, and targeted code inspection. If a validation command may write generated files, ask first or defer it.
 
-- Care about correctness, broken flows, data loss, privacy/security footguns, confusing structure, missing essential checks, instruction conflicts, unclear ownership, brittle workflow assumptions, and poor fit with the existing project style.
-- Verify correctness, completeness, and solidity for the stated purpose.
-- For plans and documents, focus on clarity, internal consistency, missing decisions, executable next steps, ambiguous scope, and whether the review is balanced for the stated stakes.
-- When a plan or intent is supplied, critique the plan itself as well as whether the diff follows it; a perfectly executed wrong plan is still a review finding.
-- Surface concrete behavioral findings with severity and confidence so Codex can verify and filter them afterward.
-- Omit enterprise SaaS assumptions, pure style nits, speculative scale concerns, broad rewrites, purity refactors, needless abstraction, and "this might matter someday" findings.
-- If there are no actionable findings, say so plainly.
-- When reviewing tool/CLI behavior, let Claude check official docs rather than relying only on model memory.
-- Let Claude run shell commands when that improves review quality, but keep the output focused on findings rather than implementation.
+Exception: if Gaurav's same message explicitly says to review and then fix accepted findings without stopping, send the triage checkpoint immediately before edits so he can interrupt.
 
-## Workflow
+## Inputs And Outputs
 
-1. Identify the current project or repo root. Do not run this from a parent directory that contains multiple unrelated repos.
-2. Include the plan, PRD, or task intent whenever possible:
-   - Use `--plan PATH` when a plan/PRD file exists.
-   - Use `--intent "..."` when the plan only lives in the conversation.
-   - Treat diff-only review as appropriate mainly for trivial or mechanical changes.
-3. Run the helper. Resolve the script path relative to this skill directory:
+Inputs: current repo/artifact, optional `--plan PATH`, optional `--intent "..."`.
+
+Outputs: Claude handoff, Codex triage checkpoint, and only after approval, narrow fixes plus focused validation.
+
+## Reviewer Posture
+
+Ask Claude for pragmatic review of serious small projects, experiments, plans, workflow docs, and agent/tooling setup.
+
+Claude should care about correctness, broken flows, data loss, privacy/security footguns, confusing structure, missing essential checks, instruction conflicts, brittle assumptions, and poor fit with project style.
+
+Claude should reject enterprise SaaS assumptions, style nits, speculative scale concerns, broad rewrites, purity refactors, needless abstraction, and "this might matter someday" findings.
+
+When a plan or intent exists, Claude should critique both the plan and whether the diff follows it.
+
+## Run The Helper
+
+1. Confirm the repo root. Do not run from a parent directory containing unrelated repos.
+2. Prefer intent-rich review:
+   - Use `--plan PATH` for a real plan/PRD.
+   - Use `--intent "..."` when the plan lives in conversation.
+   - Use diff-only review mainly for trivial or mechanical changes.
+3. Run the helper from this skill directory:
 
 ```sh
 scripts/claude_fresh_review.rb --intent "Short description of the change"
@@ -48,21 +56,41 @@ scripts/claude_fresh_review.rb --zellij-session feature-review
 scripts/claude_fresh_review.rb --dry-run
 ```
 
-The helper writes the assembled prompt bundle, system prompt, handoff path, and done marker under `/tmp/claude-fresh-review/...`, starts Claude in Zellij, waits for the Claude prompt, accepts the bypass-permissions startup responsibility screen if it appears, opens Ghostty attached to the session, bracket-pastes the review task, and prints attach/inspect/interrupt commands. `ZELLIJ_SOCKET_DIR` must be set in shell startup to a short stable path such as `/tmp/zellij`; if it is missing, the helper exits instead of creating a hidden alternate namespace.
+The helper starts Claude in a visible one-off Zellij session, passes repo status/diff/plan/intent, and prints the handoff path, done marker, attach command, and completion check. It grants Claude `Bash`, `WebSearch`, and `WebFetch` under `--permission-mode bypassPermissions`; use only in trusted local repos.
 
-Observation policy: after launching Claude visibly, Codex should let the user be the live observer and should not continuously poll the pane. When Codex needs completion, do the first marker check after 2-3 minutes, then poll the printed done marker cheaply and read the handoff file once it exists. Inspect the pane only on explicit user request, a bounded checkpoint, or to verify a concrete finding. Prefer `zellij list-sessions --short` for liveness and viewport-only `dump-screen` with small output caps. Avoid repeated `dump-screen --full` polling; use full transcript dumps only as diagnostics, preferably written to a temp file. Codex should still verify every Claude finding against the real repo before accepting it.
+Observation: let Gaurav be the live observer. First check the done marker after 2-3 minutes, then poll the marker cheaply and read the handoff once it exists. Inspect the pane only on explicit request, a bounded checkpoint, or to verify a concrete finding. Prefer viewport-only `dump-screen`; avoid repeated full transcript dumps.
 
-## After Claude responds
+## Triage Checkpoint
 
-- Before editing anything, give Gaurav a brief, plain triage summary:
-  - What Claude found.
-  - Which findings Codex agrees with.
-  - Why each accepted finding is real or important.
-  - Which findings Codex rejects or treats as low-priority noise, and why.
-  - What Codex plans to do next.
-- Keep this summary short but readable. It should be a decision checkpoint, not a second full review.
-- Verify each finding against the real code before accepting it.
-- Fix only concrete, in-scope issues.
-- Briefly reject noisy, speculative, or over-engineered findings.
-- Re-run focused checks after fixes.
-- If the fixes materially change the diff, one follow-up Claude review is reasonable; avoid endless review loops.
+After Claude responds:
+
+1. Read the handoff.
+2. Verify and classify each finding as accepted, rejected, or deferred.
+3. Send this checkpoint and stop:
+
+```md
+Claude found:
+- [short list of findings]
+
+I agree with:
+- [finding]: [why it is real and worth fixing]
+
+I reject or defer:
+- [finding]: [why it is noise, speculative, already handled, or not worth fixing now]
+
+Implementation plan:
+- [smallest concrete edits]
+- [focused checks to run]
+
+Waiting for your go-ahead before I edit.
+```
+
+Keep it short. If there are no actionable findings, say so and include any residual risk or test gap.
+
+## After Approval
+
+- Fix only accepted, concrete, in-scope issues.
+- Keep edits narrow and consistent with the repo.
+- Re-run focused checks.
+- Summarize changed files and validation.
+- If fixes materially change the diff, one follow-up Claude review is reasonable; avoid review loops.

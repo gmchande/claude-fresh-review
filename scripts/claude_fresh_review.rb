@@ -208,7 +208,8 @@ def zellij_session_name(options)
   "cfr-#{Time.now.utc.strftime("%H%M%S")}"
 end
 
-def claude_interactive_shell_cmd(system_prompt_path)
+def claude_print_shell_cmd(system_prompt_path, prompt_path)
+  stream_printer_path = File.expand_path("claude_stream_printer.rb", __dir__)
   cmd = [
     "claude",
     "--model",
@@ -222,17 +223,29 @@ def claude_interactive_shell_cmd(system_prompt_path)
     "--allowedTools",
     CLAUDE_REVIEW_TOOLS,
     "--append-system-prompt-file",
-    system_prompt_path
+    system_prompt_path,
+    "-p",
+    "--verbose",
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages"
   ]
 
-  cmd.shelljoin
+  [
+    "set -o pipefail",
+    "#{cmd.shelljoin} < #{prompt_path.shellescape} 2>&1 | ruby #{stream_printer_path.shellescape}",
+    "rc=$?",
+    "echo",
+    "echo Claude review exited with status $rc",
+    "exec ${SHELL:-/bin/zsh} -l"
+  ].join("; ")
 end
 
 def run_zellij_review(system_prompt, payload, repo_root, options)
   session = zellij_session_name(options)
   prompt_path = write_prompt_bundle(payload, repo_root)
   system_prompt_path = write_system_prompt(system_prompt, prompt_path)
-  cmd = claude_interactive_shell_cmd(system_prompt_path)
+  cmd = claude_print_shell_cmd(system_prompt_path, prompt_path)
 
   ClaudeVisibleSession.run_session(
     skill_name: "claude-fresh-review",
@@ -240,11 +253,10 @@ def run_zellij_review(system_prompt, payload, repo_root, options)
     repo_root: repo_root,
     pane_name: "Claude Fresh Review",
     claude_shell_command: cmd,
-    prompt_text: payload,
     prompt_path: prompt_path,
     system_prompt_path: system_prompt_path,
     prompt_label: "review task",
-    sent_message: "Claude review prompt sent to Zellij session"
+    sent_message: "Claude review started in Zellij session"
   )
 end
 

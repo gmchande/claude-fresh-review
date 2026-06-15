@@ -5,11 +5,6 @@ require "open3"
 require "shellwords"
 
 module ClaudeVisibleSession
-  BYPASS_WARNING_MARKERS = ["Bypass", "Permissions", "Yes", "accept"].freeze
-  READY_MARKERS = ["Claude Code", "❯"].freeze
-  PASTE_CHUNK_SIZE = 8_000
-  READY_TIMEOUT_SECONDS = 60
-
   module_function
 
   def run_session(
@@ -18,7 +13,6 @@ module ClaudeVisibleSession
     repo_root:,
     pane_name:,
     claude_shell_command:,
-    prompt_text:,
     prompt_path:,
     system_prompt_path:,
     prompt_label:,
@@ -58,7 +52,7 @@ module ClaudeVisibleSession
       "--name",
       pane_name,
       "--",
-      "sh",
+      "zsh",
       "-lc",
       claude_shell_command,
       allow_failure: true
@@ -73,28 +67,18 @@ module ClaudeVisibleSession
 
     pane_id = stdout.strip
     if pane_id.empty?
-      warn "Zellij did not return a pane id; cannot safely paste the prompt."
+      warn "Zellij did not return a pane id; cannot safely watch the #{prompt_label}."
       delete_zellij_session(session)
       exit 1
     end
 
     close_other_terminal_panes(session, pane_id)
-    unless wait_for_claude_prompt(session, pane_id, prompt_label)
-      delete_zellij_session(session)
-      exit 1
-    end
-
     zellij("--session", session, "action", "focus-pane-id", pane_id)
     unless open_ghostty_attach(session, repo_root)
-      warn "Failed to open the visible Ghostty attach tab; not sending the #{prompt_label} invisibly."
+      warn "Failed to open the visible Ghostty attach tab; stopping the #{prompt_label}."
       delete_zellij_session(session)
       exit 1
     end
-
-    sleep 1
-    paste_text(session, pane_id, prompt_text)
-    sleep 2
-    zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "Enter")
 
     puts "#{sent_message}: #{session}"
     puts "Zellij pane: #{pane_id}"
@@ -119,7 +103,6 @@ module ClaudeVisibleSession
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full", "--path", diagnostic_screen_path(skill_name, session))
     puts
     puts "Interrupt:"
-    puts zellij_shell_command("--session", session, "action", "send-keys", "--pane-id", pane_id, "Esc")
     puts zellij_shell_command("--session", session, "action", "send-keys", "--pane-id", pane_id, "Ctrl c")
   end
 
@@ -188,16 +171,6 @@ module ClaudeVisibleSession
     stdout.lines.map(&:strip).include?(session)
   end
 
-  def zellij_dump_screen(session, pane_id, full: false)
-    args = ["--session", session, "action", "dump-screen", "--pane-id", pane_id]
-    args << "--full" if full
-
-    stdout, _stderr, status = zellij(*args, allow_failure: true)
-    return stdout if status.success?
-
-    ""
-  end
-
   def close_other_terminal_panes(session, pane_id)
     stdout, _stderr, status = zellij("--session", session, "action", "list-panes", allow_failure: true)
     return unless status.success?
@@ -212,47 +185,6 @@ module ClaudeVisibleSession
 
   def delete_zellij_session(session)
     zellij("delete-session", session, "--force", allow_failure: true)
-  end
-
-  def bypass_warning_screen?(screen)
-    BYPASS_WARNING_MARKERS.all? { |marker| screen.include?(marker) }
-  end
-
-  def claude_ready_screen?(screen)
-    READY_MARKERS.all? { |marker| screen.include?(marker) } && !bypass_warning_screen?(screen)
-  end
-
-  def accept_bypass_warning(session, pane_id)
-    warn "Claude bypass-permissions startup screen detected; selecting Yes, I accept."
-    zellij("--session", session, "action", "send-keys", "--pane-id", pane_id, "2", "Enter")
-  end
-
-  def wait_for_claude_prompt(session, pane_id, prompt_label)
-    deadline = Time.now + READY_TIMEOUT_SECONDS
-
-    until Time.now > deadline
-      screen = zellij_dump_screen(session, pane_id)
-      if bypass_warning_screen?(screen)
-        accept_bypass_warning(session, pane_id)
-        sleep 1
-        next
-      end
-
-      return true if claude_ready_screen?(screen)
-
-      sleep 0.5
-    end
-
-    warn "Claude pane did not show a ready prompt within #{READY_TIMEOUT_SECONDS}s; not sending the #{prompt_label}."
-    warn "Inspect it with: #{zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)}"
-    false
-  end
-
-  def paste_text(session, pane_id, text)
-    # Bracketed paste keeps embedded newlines and line-leading command syntax literal.
-    text.each_char.each_slice(PASTE_CHUNK_SIZE) do |chars|
-      zellij("--session", session, "action", "paste", "--pane-id", pane_id, "--", chars.join)
-    end
   end
 
   def completion_handoff_instructions(handoff_path, done_marker_path)
@@ -306,7 +238,9 @@ module ClaudeVisibleSession
 
   def open_ghostty_attach(session, repo_root)
     attach_inner = "export ZELLIJ_SOCKET_DIR=#{ENV.fetch("ZELLIJ_SOCKET_DIR").shellescape}; " \
-                   "#{command_path("zellij").shellescape} attach #{session.shellescape}; exec /bin/zsh -l"
+                   "#{command_path("zellij").shellescape} attach #{session.shellescape}; " \
+                   "cd #{repo_root.shellescape} 2>/dev/null || cd; " \
+                   "exec /bin/zsh -l"
     attach_command = "/bin/zsh -lc #{Shellwords.escape(attach_inner)}"
 
     script = <<~APPLESCRIPT

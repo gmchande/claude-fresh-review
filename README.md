@@ -11,7 +11,7 @@ The intended workflow is simple: use Codex for planning and implementation, then
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`. On dirty trees, `--base` reviews the working tree against the merge base so committed branch work and uncommitted changes are both included.
 - Accepts plan, PRD, or artifact context with `--plan`.
 - Accepts conversation-level intent with `--intent`.
-- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, xhigh effort, and `--permission-mode bypassPermissions` by default.
+- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, xhigh effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
 - Opens a Ghostty tab attached to the Zellij session and prints the exact attach, inspect, and interrupt commands.
@@ -90,19 +90,18 @@ Inspect the prompt bundle without calling Claude:
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root, accepts Claude's bypass-permissions startup responsibility screen if it appears, waits for the Claude prompt, opens a Ghostty tab attached to the session, bracket-pastes the assembled review task, presses Enter, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session, and prints commands like:
 
 ```sh
 zellij attach feature-review
 zellij --session feature-review action dump-screen --pane-id terminal_0
 zellij --session feature-review action dump-screen --pane-id terminal_0 --full --path /tmp/claude-fresh-review-feature-review.screen.txt
-zellij --session feature-review action send-keys --pane-id terminal_0 Esc
 zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 ```
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under `/tmp/claude-fresh-review/...` so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch live, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo.
+The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under `/tmp/claude-fresh-review/...` so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo.
 
 ## Review posture
 

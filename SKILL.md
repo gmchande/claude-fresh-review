@@ -63,9 +63,9 @@ scripts/claude_fresh_review.rb --zellij-session feature-review
 scripts/claude_fresh_review.rb --dry-run
 ```
 
-The helper starts Claude in a visible one-off Zellij session, passes repo status/diff/plan/intent, and prints the handoff path, done marker, attach command, and completion check. It grants Claude `Bash`, `WebSearch`, and `WebFetch` under `--permission-mode bypassPermissions`; use only in trusted local repos.
+The helper starts Claude in a visible one-off Zellij session, passes repo status/diff/plan/intent through a prompt file with `claude -p`, streams Claude's JSON events through a readable terminal formatter, and prints the handoff path, done marker, attach command, and completion check. It grants Claude `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch` under `--permission-mode bypassPermissions`; use only in trusted local repos.
 
-Observation: let the user be the live observer. First check the done marker after 2-3 minutes, then poll the marker cheaply and read the handoff once it exists. Inspect the pane only on explicit request, a bounded checkpoint, or to verify a concrete finding. Prefer viewport-only `dump-screen`; avoid repeated full transcript dumps.
+Observation: let the user be the live observer. The pane should show formatted Claude status, text, tool calls, and tool output while the run is active. First check the done marker after 2-3 minutes, then poll the marker cheaply and read the handoff once it exists. Inspect the pane only on explicit request, a bounded checkpoint, or to verify a concrete finding. Prefer viewport-only `dump-screen`; avoid repeated full transcript dumps.
 
 ## Triage Checkpoint
 

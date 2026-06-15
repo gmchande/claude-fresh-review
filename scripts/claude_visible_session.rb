@@ -33,7 +33,7 @@ module ClaudeVisibleSession
     FileUtils.rm_f([handoff_path, done_marker_path])
     File.open(system_prompt_path, "a") do |file|
       file.write("\n")
-      file.write(completion_handoff_instructions(handoff_path, done_marker_path))
+      file.write(completion_handoff_instructions(handoff_path))
     end
 
     _stdout, stderr, status = zellij("attach", "--create-background", session, allow_failure: true)
@@ -90,8 +90,9 @@ module ClaudeVisibleSession
     puts "Watch:"
     puts zellij_shell_command("attach", session)
     puts
-    puts "Completion check:"
-    puts "test -f #{done_marker_path.shellescape} && cat #{handoff_path.shellescape}"
+    puts "Completion check (marker holds Claude's exit code):"
+    puts "test -f #{done_marker_path.shellescape} && cat #{done_marker_path.shellescape}"
+    puts "test -f #{done_marker_path.shellescape} && [ \"$(cat #{done_marker_path.shellescape})\" = \"0\" ] && cat #{handoff_path.shellescape}"
     puts
     puts "Codex observation policy:"
     puts "Let the user watch in Zellij/Ghostty. First marker check should be after 2-3 minutes; inspect the pane only on request, at a bounded checkpoint, or to verify a concrete finding."
@@ -187,7 +188,7 @@ module ClaudeVisibleSession
     zellij("delete-session", session, "--force", allow_failure: true)
   end
 
-  def completion_handoff_instructions(handoff_path, done_marker_path)
+  def completion_handoff_instructions(handoff_path)
     <<~TEXT
       ## Completion Handoff
 
@@ -197,13 +198,7 @@ module ClaudeVisibleSession
       #{handoff_path}
       ```
 
-      Then create this done marker as your final filesystem action:
-
-      ```text
-      #{done_marker_path}
-      ```
-
-      The handoff file should contain the same final findings or implementation summary you print in the terminal. Writing the handoff and done-marker files under /tmp is expected and is not a repo edit. If you are blocked, still write the handoff file with the blocker and then create the done marker.
+      The handoff file should contain the same final findings or implementation summary you print in the terminal. Writing the handoff file under /tmp is expected and is not a repo edit. If you are blocked, still write the handoff file with the blocker. The session writes its own done marker automatically when the run exits, so you do not need to create one.
     TEXT
   end
 

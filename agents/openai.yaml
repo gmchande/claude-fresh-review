@@ -1,7 +1,7 @@
 interface:
   display_name: "Claude Fresh Review"
-  short_description: "Visible Claude/Zellij fresh-eyes review for diffs and artifacts"
+  short_description: "Claude/Zellij review for diffs and artifacts"
   default_prompt: "Use $claude-fresh-review to launch a visible Claude review of the current diff or artifact with a pragmatic, thorough small-project rubric."
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false

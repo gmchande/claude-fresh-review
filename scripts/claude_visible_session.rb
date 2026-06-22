@@ -91,14 +91,17 @@ module ClaudeVisibleSession
     puts zellij_shell_command("attach", session)
     puts
     puts "Completion check (marker holds Claude's exit code):"
-    puts "test -f #{done_marker_path.shellescape} && cat #{done_marker_path.shellescape}"
-    puts "test -f #{done_marker_path.shellescape} && [ \"$(cat #{done_marker_path.shellescape})\" = \"0\" ] && cat #{handoff_path.shellescape}"
+    puts "if test -f #{done_marker_path.shellescape}; then cat #{done_marker_path.shellescape}; else echo 'PENDING_OR_AMBIGUOUS: no done marker yet'; fi"
+    puts "if test -f #{done_marker_path.shellescape} && [ \"$(cat #{done_marker_path.shellescape})\" = \"0\" ]; then cat #{handoff_path.shellescape}; else ls -l #{done_marker_path.shellescape} #{handoff_path.shellescape} 2>/dev/null || true; fi"
     puts
     puts "Codex observation policy:"
-    puts "Let the user watch in Zellij/Ghostty. First marker check should be after 2-3 minutes; inspect the pane only on request, at a bounded checkpoint, or to verify a concrete finding."
+    puts "Let the user watch in Zellij/Ghostty. First marker check should be after 2-3 minutes; keep polling marker/handoff paths before diagnosing pane errors."
     puts
     puts "Quick inspect (viewport only):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)
+    puts
+    puts "Session state diagnostic:"
+    puts zellij_shell_command("list-sessions")
     puts
     puts "Full transcript (diagnostic only, writes to a temp file):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full", "--path", diagnostic_screen_path(skill_name, session))

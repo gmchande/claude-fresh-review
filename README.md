@@ -9,8 +9,10 @@ The intended workflow is simple: use Codex for planning and implementation, then
 - Reviews a dirty working tree against `HEAD`, including untracked text files.
 - Reviews new experiment repos before the first commit by comparing tracked changes to Git's empty tree and bundling untracked text files.
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`. On dirty trees, `--base` reviews the working tree against the merge base so committed branch work and uncommitted changes are both included.
-- Accepts plan, PRD, or artifact context with `--plan`.
+- Accepts plan or PRD context with `--plan`.
+- Reviews repo artifacts with `--artifact`; artifact-only when the worktree is clean.
 - Accepts conversation-level intent with `--intent`.
+- Checks local dependencies with `--doctor`.
 - Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, xhigh effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
@@ -56,10 +58,22 @@ Include plan context when available:
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --plan docs/plan.md
 ```
 
+Review a standalone repo artifact when the worktree is clean:
+
+```sh
+~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --artifact docs/plan.md
+```
+
 Review already-committed work:
 
 ```sh
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --base HEAD~1
+```
+
+Check local review dependencies:
+
+```sh
+~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --doctor
 ```
 
 Use less effort for simpler diffs:
@@ -86,6 +100,12 @@ Inspect the prompt bundle without calling Claude:
 
 ```sh
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --dry-run --intent "Check prompt"
+```
+
+Run deterministic smoke tests:
+
+```sh
+ruby ~/.codex/skills/claude-fresh-review/scripts/smoke_test.rb
 ```
 
 ## Runtime Behavior

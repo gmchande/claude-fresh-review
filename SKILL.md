@@ -1,81 +1,69 @@
 ---
 name: claude-fresh-review
-description: Claude Code review delegation for the current diff, plan, or repo artifact. Launches a visible Zellij review and has Codex verify, triage, and checkpoint findings before editing.
+description: Manual Claude Code review gate for the current diff, branch, or repo artifact. Launch a visible Zellij review, verify Claude's findings against the repo, and checkpoint before editing.
 ---
 
 # Claude Fresh Review
 
-Use this skill to ask Claude Code for an independent review of the current repo
-diff, branch, plan, PRD, document, or agent/tooling setup. Claude is review
-input, not authority; Codex must verify every finding.
+Launch Claude Code as an independent reviewer. Claude is review input, not
+authority: verify every finding against the real repo before acting on it.
 
-## Gate
+## Preflight
 
-After Claude responds, verify the findings against the repo, send a triage
-checkpoint, and stop before editing.
+Confirm the target repo root. Do not run from a parent directory containing
+unrelated repos. Use `--doctor` if the visible review environment is uncertain.
 
-Before the checkpoint and approval, do not call `apply_patch`, run
-formatters/generators/autofixers, stage, commit, push, or otherwise modify repo
-files.
+Before the verification checkpoint, do not call `apply_patch`, run
+formatters/generators/autofixers, stage, commit, push, or modify repo files.
 
 Allowed before the checkpoint: `git status`, `git diff`, `rg`, `sed`, `nl`,
 read-only inspection, and validation commands that do not write files. If a
 validation command may write generated files, ask first or defer it.
 
-Exception: if the same user message explicitly says to review and then fix accepted findings without stopping, send the triage checkpoint immediately before edits so the user can interrupt.
+Exception: if the same user message explicitly says to review and then fix
+accepted findings without stopping, send the checkpoint immediately before edits
+so the user can interrupt.
 
-## Run
+## Launch
 
-Confirm the target repo root. Do not run from a parent directory containing
-unrelated repos. From the target repo root, run the helper from this skill
-directory:
+From the target repo root, run the helper from this skill directory:
 
 ```sh
 /path/to/claude-fresh-review/scripts/claude_fresh_review.rb \
   --intent "Short description of the change"
 ```
 
-The helper reviews the git repo containing the current working directory. Do not
-run from the skill directory unless reviewing this skill. Replace
-`/path/to/claude-fresh-review` with the loaded skill directory.
+Replace `/path/to/claude-fresh-review` with the loaded skill directory. Do not
+run from the skill directory unless reviewing this skill.
 
-Prefer `--plan PATH` for real plan/PRD context. Use `--intent "..."` when the
-plan lives in conversation. Use diff-only review mainly for trivial or
-mechanical changes. Useful options: `--base REF`, `--zellij-session NAME`, and
-`--dry-run`.
+Use:
 
-Security note: Claude does not receive Edit/Write tools, but Bash under
-`bypassPermissions` is not read-only. Use only in trusted local repos and check
-`git status` after the run.
+- `--plan PATH` for spec/PRD context that should judge the diff.
+- `--artifact PATH` to include a document, plan, workflow, or prompt. It is
+  artifact-only when the worktree is clean; otherwise it reviews the artifact
+  alongside the current diff.
+- `--intent "..."` when the intent lives only in conversation.
+- `--base REF` for already-committed branch work.
+- `--dry-run` to inspect the prompt bundle without launching Claude.
 
-## Review Scope
-
-The helper carries the detailed Claude reviewer prompt. Codex's job is to make
-sure Claude reviewed the actual diff or artifact, then verify each finding
-against the real repo and reject noise.
+Claude does not receive Edit/Write tools, but Bash under `bypassPermissions` is
+not read-only. Use this only in trusted local repos and check `git status` after
+the run.
 
 ## Observe
 
 Let the user watch the visible Zellij/Ghostty session. First check the done
-marker after 2-3 minutes, then poll the marker/handoff paths. The marker holds
-Claude's exit code: `0` means read the handoff; non-zero usually means the run
-failed or was interrupted, but check whether the handoff exists before
-discarding it.
+marker after 2-3 minutes, then poll the marker/handoff paths printed by the
+helper. The marker holds Claude's exit code. If the run behaves ambiguously,
+read [references/observing-zellij.md](references/observing-zellij.md).
 
-If the marker is absent, the review is not complete yet; keep polling until
-about 15 minutes have passed. If pane/session inspection says the session is
-gone or exited, check the marker and handoff directly before diagnosing or
-rerunning. If the session is repeatedly gone/exited and the marker is still
-absent after a brief recheck, treat the run as failed or ambiguous. Prefer
-viewport-only `dump-screen`; avoid repeated full transcript dumps.
+## Verify Gate
 
-## Triage
-
-After Claude responds:
+After Claude responds, verify before editing:
 
 1. Read the handoff.
-2. Review the actual diff, status, and any untracked files yourself.
-3. Verify and classify each finding as accepted, rejected, or deferred.
+2. Inspect the actual diff, status, untracked files, and artifact if supplied.
+3. Classify each Claude finding as accepted, rejected, or deferred.
 4. Send this checkpoint and stop:
 
 ```md
@@ -98,7 +86,8 @@ Implementation plan:
 Waiting for your go-ahead before I edit.
 ```
 
-Keep it short. If there are no actionable findings, say so and include any residual risk or test gap.
+If there are no actionable findings, say so and include any residual risk or
+test gap.
 
 ## After Approval
 

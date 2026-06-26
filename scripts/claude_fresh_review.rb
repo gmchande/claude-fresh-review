@@ -12,9 +12,22 @@ MAX_DIFF_BYTES = 200_000
 MAX_UNTRACKED_BYTES = 200_000
 MAX_UNTRACKED_BUNDLE_BYTES = 500_000
 CLAUDE_MODEL = ENV.fetch("CLAUDE_REVIEW_MODEL", "claude-opus-4-8")
-CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "xhigh")
+CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "max")
 CLAUDE_PERMISSION_MODE = "bypassPermissions"
 CLAUDE_REVIEW_TOOLS = "Read,Grep,Glob,Bash,WebSearch,WebFetch"
+SECRET_DIR_NAMES = %w[.aws .azure .gnupg .kube .ssh].freeze
+SECRET_BASENAMES = %w[
+  .env .envrc .netrc .npmrc .pypirc .pgpass
+  credentials credentials.json id_dsa id_ecdsa id_ed25519 id_rsa
+].freeze
+SECRET_EXTENSIONS = %w[.key .pem .p12 .pfx].freeze
+SOURCE_CODE_EXTENSIONS = %w[
+  .c .cc .clj .cpp .cs .css .dart .ex .exs .go .h .hpp .java .js .jsx .kt
+  .m .mm .php .py .rb .rs .scala .swift .ts .tsx .vue
+].freeze
+SECRET_NAME_TOKENS = %w[
+  credential credentials password passwd secret secrets token tokens
+].freeze
 
 options = {
   base: nil,
@@ -116,29 +129,64 @@ def read_artifact(path)
 end
 
 def macos_app_available?(name)
+  return false unless command_available?("osascript")
+
   _stdout, _stderr, status = run("osascript", "-e", "id of application \"#{name}\"", allow_failure: true)
   status.success?
 end
 
 def doctor!
-  checks = []
-  checks << ["git", command_available?("git")]
-  checks << ["ruby", command_available?("ruby")]
-  checks << ["claude", command_available?("claude")]
-  checks << ["zellij", command_available?("zellij")]
-  checks << ["osascript", command_available?("osascript")]
-  checks << ["Ghostty.app", command_available?("osascript") && macos_app_available?("Ghostty")]
-  checks << ["ZELLIJ_SOCKET_DIR", !ENV.fetch("ZELLIJ_SOCKET_DIR", "").empty?]
+  required_checks = []
+  required_checks << ["git", command_available?("git")]
+  required_checks << ["ruby", command_available?("ruby")]
+  required_checks << ["zsh", command_available?("zsh")]
+  required_checks << ["claude", command_available?("claude")]
+  required_checks << ["zellij", command_available?("zellij")]
+  required_checks << ["ZELLIJ_SOCKET_DIR", !ENV.fetch("ZELLIJ_SOCKET_DIR", "").empty?]
 
-  checks.each do |label, ok|
+  optional_checks = []
+  optional_checks << ["osascript auto-open support", command_available?("osascript")]
+  optional_checks << ["Ghostty.app auto-open support", macos_app_available?("Ghostty")]
+
+  required_checks.each do |label, ok|
     puts "#{ok ? "OK" : "MISSING"} #{label}"
   end
 
-  exit(checks.all? { |_label, ok| ok } ? 0 : 1)
+  optional_checks.each do |label, ok|
+    puts "#{ok ? "OK" : "OPTIONAL_MISSING"} #{label}"
+  end
+
+  exit(required_checks.all? { |_label, ok| ok } ? 0 : 1)
+end
+
+def secret_like_untracked_path?(path)
+  parts = path.split(/[\\\/]+/)
+  return true if (parts[0...-1] & SECRET_DIR_NAMES).any?
+
+  basename = File.basename(path).downcase
+  ext = File.extname(basename).downcase
+  return true if basename.start_with?(".env.")
+  return true if SECRET_BASENAMES.include?(basename)
+  return true if SECRET_EXTENSIONS.include?(ext)
+
+  return false if SOURCE_CODE_EXTENSIONS.include?(ext)
+
+  normalized = basename.gsub(/[^a-z0-9]+/, "_")
+  return true if normalized.include?("apikey")
+  return true if normalized.include?("api_key")
+  return true if normalized.include?("privatekey")
+  return true if normalized.include?("private_key")
+  return true if normalized.include?("serviceaccount")
+  return true if normalized.include?("service_account")
+
+  name_tokens = basename.split(/[^a-z0-9]+/).reject(&:empty?)
+  (name_tokens & SECRET_NAME_TOKENS).any?
 end
 
 def untracked_file_section(path)
-  if !likely_text_file?(path)
+  if secret_like_untracked_path?(path)
+    "### #{path}\n\nSkipped: likely secret or credential filename.\n"
+  elsif !likely_text_file?(path)
     "### #{path}\n\nSkipped: not a readable text file.\n"
   elsif File.size(path) > MAX_UNTRACKED_BYTES
     "### #{path}\n\nSkipped: file is larger than #{MAX_UNTRACKED_BYTES} bytes.\n"
@@ -216,7 +264,7 @@ end
 def default_prompt_file(repo_root)
   repo_slug = slug(File.basename(repo_root))
   stamp = Time.now.utc.strftime("%Y%m%d-%H%M%S")
-  File.join(Dir.tmpdir, "claude-fresh-review", "#{stamp}-#{repo_slug}-review.md")
+  File.join(private_tmp_root, "#{stamp}-#{repo_slug}-review.md")
 end
 
 def default_system_prompt_file(prompt_path)
@@ -225,16 +273,29 @@ def default_system_prompt_file(prompt_path)
   "#{prompt_path}-system.md"
 end
 
+def private_tmp_root
+  path = File.join(Dir.tmpdir, "claude-fresh-review")
+  FileUtils.mkdir_p(path)
+  FileUtils.chmod(0o700, path)
+  path
+end
+
+def write_private_file(path, content)
+  File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(content)
+  end
+end
+
 def write_prompt_bundle(payload, repo_root)
   path = default_prompt_file(repo_root)
   FileUtils.mkdir_p(File.dirname(path)) unless File.dirname(path) == "."
-  File.write(path, payload)
+  write_private_file(path, payload)
   path
 end
 
 def write_system_prompt(system_prompt, prompt_path)
   path = default_system_prompt_file(prompt_path)
-  File.write(path, system_prompt)
+  write_private_file(path, system_prompt)
   path
 end
 

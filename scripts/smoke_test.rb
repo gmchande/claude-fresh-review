@@ -104,6 +104,34 @@ ensure
   FileUtils.rm_rf(repo) if repo
 end
 
+def test_secret_untracked_skip
+  repo = init_repo
+  write(repo, "app.txt", "hello\n")
+  commit_all(repo, "initial")
+  write(repo, ".env", "LEAK_ME_ENV=1\n")
+  write(repo, "config/api_token.txt", "LEAK_ME_TOKEN=1\n")
+  write(repo, "auth.rb", "class Auth\nend\n")
+  write(repo, "tokens.rb", "TOKENS_SOURCE = true\n")
+  write(repo, "password_input.tsx", "export function PasswordInput() {}\n")
+
+  output, status = dry_run(repo, "--intent", "Review secret skips")
+
+  assert(status.success?, "secret untracked dry-run should succeed")
+  assert_includes(output, "### .env", "secret untracked")
+  assert_includes(output, "### config/api_token.txt", "secret untracked")
+  assert_includes(output, "Skipped: likely secret or credential filename.", "secret untracked")
+  assert(!output.include?("LEAK_ME_ENV"), "secret untracked: should not include .env contents")
+  assert(!output.include?("LEAK_ME_TOKEN"), "secret untracked: should not include token file contents")
+  assert_includes(output, "### auth.rb", "secret untracked")
+  assert_includes(output, "class Auth", "secret untracked")
+  assert_includes(output, "### tokens.rb", "secret untracked")
+  assert_includes(output, "TOKENS_SOURCE = true", "secret untracked")
+  assert_includes(output, "### password_input.tsx", "secret untracked")
+  assert_includes(output, "PasswordInput", "secret untracked")
+ensure
+  FileUtils.rm_rf(repo) if repo
+end
+
 def test_missing_plan
   repo = init_repo
   write(repo, "app.txt", "hello\n")
@@ -168,6 +196,7 @@ tests = [
   method(:test_dirty_diff),
   method(:test_clean_branch_with_base),
   method(:test_unborn_untracked),
+  method(:test_secret_untracked_skip),
   method(:test_missing_plan),
   method(:test_binary_untracked_skip),
   method(:test_artifact_only),

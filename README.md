@@ -4,19 +4,21 @@ A Codex skill that asks Claude Code for a fresh-eyes review of the current git d
 
 The intended workflow is simple: use Codex for planning and implementation, then launch Claude Code in a visible Zellij session as an independent reviewer before you keep moving. The review posture is pragmatic and thorough for serious small projects: catch correctness bugs, broken flows, data loss, security footguns, unclear plans, brittle workflow assumptions, and poor fit with the existing project style without drifting into enterprise hardening or speculative architecture review.
 
+The core runner uses Ruby, Git, zsh, Zellij, and the Claude Code CLI. On macOS with Ghostty it opens a watching tab automatically; without Ghostty, the review still runs in Zellij and prints the manual attach command.
+
 ## What it does
 
-- Reviews a dirty working tree against `HEAD`, including untracked text files.
-- Reviews new experiment repos before the first commit by comparing tracked changes to Git's empty tree and bundling untracked text files.
+- Reviews a dirty working tree against `HEAD`, including untracked text files that do not look like credentials.
+- Reviews new experiment repos before the first commit by comparing tracked changes to Git's empty tree and bundling untracked text files while skipping likely credential filenames.
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`. On dirty trees, `--base` reviews the working tree against the merge base so committed branch work and uncommitted changes are both included.
 - Accepts plan or PRD context with `--plan`.
 - Reviews repo artifacts with `--artifact`; artifact-only when the worktree is clean.
 - Accepts conversation-level intent with `--intent`.
 - Checks local dependencies with `--doctor`.
-- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, xhigh effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
+- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, max effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
-- Opens a Ghostty tab attached to the Zellij session and prints the exact attach, inspect, and interrupt commands.
+- Opens a Ghostty tab attached to the Zellij session when available and always prints the exact attach, inspect, and interrupt commands.
 
 ## Install
 
@@ -38,13 +40,29 @@ chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review/scripts/claude_
 
 - Ruby
 - Git
-- Claude Code CLI on `PATH`
+- zsh on `PATH`
+- Claude Code CLI on `PATH`; tested with Claude Code 2.1.193
 - Zellij 0.44+ on `PATH`
-- Ghostty.app installed and registered with macOS
 - `ZELLIJ_SOCKET_DIR` set in shell startup to a short stable path such as `/tmp/zellij`
+- Optional: Ghostty.app installed and registered with macOS for automatic watch-tab opening
 - Optional: GitHub CLI, used only to infer the PR base branch when available
 
+Set the Zellij socket path once in your shell startup:
+
+```sh
+export ZELLIJ_SOCKET_DIR=/tmp/zellij
+mkdir -p "$ZELLIJ_SOCKET_DIR"
+```
+
 ## Usage
+
+From Codex, invoke the skill by name:
+
+```text
+Use $claude-fresh-review to review the current diff with intent: "What changed and why"
+```
+
+Codex should launch the helper, read Claude's handoff, verify the findings against the repo, and stop at a checkpoint before making edits.
 
 From a repo you want reviewed:
 
@@ -108,9 +126,15 @@ Run deterministic smoke tests:
 ruby ~/.codex/skills/claude-fresh-review/scripts/smoke_test.rb
 ```
 
+## Security Notes
+
+Run this only in local repos and artifacts you trust. Claude receives the git diff, supplied plan or artifact, and eligible untracked text files. Untracked paths that look like credentials are skipped by default, including `.env`, `.env.*`, `.npmrc`, `.pypirc`, SSH/AWS/Kube/GnuPG directories, private-key extensions, and non-source filenames containing tokens such as `secret`, `token`, `credential`, or `password`.
+
+The skip-list is a guardrail, not a secrets scanner. Keep real secrets ignored, removed, or outside the repo before review. Prompt bundles and system prompts are written into an owner-only temp directory with owner-only file permissions.
+
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session when available, and prints commands like:
 
 ```sh
 zellij attach feature-review
@@ -121,7 +145,7 @@ zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under `/tmp/claude-fresh-review/...` so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo. If the done marker is absent, keep polling until about 15 minutes have passed; do not rerun solely because `dump-screen`, `list-panes`, or `list-sessions` reports no active session. Check the done marker and handoff paths directly first. If the session is repeatedly confirmed gone/exited and the marker remains absent after a brief direct recheck, treat the run as failed or ambiguous rather than polling forever. If the marker is non-zero but the handoff exists, inspect the handoff before discarding the review.
+The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under an owner-only `claude-fresh-review` directory in the system temp directory so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. If Ghostty auto-open is unavailable, the Zellij review keeps running and the printed `zellij attach <session>` command is the supported way to watch it. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo. If the done marker is absent, keep polling until about 15 minutes have passed; do not rerun solely because `dump-screen`, `list-panes`, or `list-sessions` reports no active session. Check the done marker and handoff paths directly first. If the session is repeatedly confirmed gone/exited and the marker remains absent after a brief direct recheck, treat the run as failed or ambiguous rather than polling forever. If the marker is non-zero but the handoff exists, inspect the handoff before discarding the review.
 
 ## Review posture
 

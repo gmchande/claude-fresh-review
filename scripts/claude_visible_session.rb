@@ -20,6 +20,7 @@ module ClaudeVisibleSession
   )
     ensure_required_command!("zellij", skill_name)
     ensure_required_command!("claude", skill_name)
+    ensure_required_command!("zsh", skill_name)
     ensure_zellij_socket_dir!(skill_name)
 
     if zellij_session_exists?(session)
@@ -74,11 +75,8 @@ module ClaudeVisibleSession
 
     close_other_terminal_panes(session, pane_id)
     zellij("--session", session, "action", "focus-pane-id", pane_id)
-    unless open_ghostty_attach(session, repo_root)
-      warn "Failed to open the visible Ghostty attach tab; stopping the #{prompt_label}."
-      delete_zellij_session(session)
-      exit 1
-    end
+    ghostty_opened = open_ghostty_attach(session, repo_root)
+    warn "Ghostty auto-open unavailable; the #{prompt_label} is still running. Attach manually with `#{zellij_shell_command("attach", session)}`." unless ghostty_opened
 
     puts "#{sent_message}: #{session}"
     puts "Zellij pane: #{pane_id}"
@@ -86,6 +84,7 @@ module ClaudeVisibleSession
     puts "System prompt: #{system_prompt_path}"
     puts "Handoff file: #{handoff_path}"
     puts "Done marker: #{done_marker_path}"
+    puts "Ghostty auto-open: #{ghostty_opened ? "opened" : "unavailable; use the watch command below"}"
     puts
     puts "Watch:"
     puts zellij_shell_command("attach", session)
@@ -95,7 +94,7 @@ module ClaudeVisibleSession
     puts "if test -f #{done_marker_path.shellescape} && [ \"$(cat #{done_marker_path.shellescape})\" = \"0\" ]; then cat #{handoff_path.shellescape}; else ls -l #{done_marker_path.shellescape} #{handoff_path.shellescape} 2>/dev/null || true; fi"
     puts
     puts "Codex observation policy:"
-    puts "Let the user watch in Zellij/Ghostty. First marker check should be after 2-3 minutes; keep polling marker/handoff paths before diagnosing pane errors."
+    puts "Let the user watch in Zellij, with Ghostty auto-open when available. First marker check should be after 2-3 minutes; keep polling marker/handoff paths before diagnosing pane errors."
     puts
     puts "Quick inspect (viewport only):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id)
@@ -235,11 +234,16 @@ module ClaudeVisibleSession
   end
 
   def open_ghostty_attach(session, repo_root)
+    unless command_available?("osascript")
+      warn "osascript not found; skipping Ghostty auto-open."
+      return false
+    end
+
     attach_inner = "export ZELLIJ_SOCKET_DIR=#{ENV.fetch("ZELLIJ_SOCKET_DIR").shellescape}; " \
                    "#{command_path("zellij").shellescape} attach #{session.shellescape}; " \
                    "cd #{repo_root.shellescape} 2>/dev/null || cd; " \
-                   "exec /bin/zsh -l"
-    attach_command = "/bin/zsh -lc #{Shellwords.escape(attach_inner)}"
+                   "exec #{command_path("zsh").shellescape} -l"
+    attach_command = "#{command_path("zsh").shellescape} -lc #{Shellwords.escape(attach_inner)}"
 
     script = <<~APPLESCRIPT
       tell application "Ghostty"

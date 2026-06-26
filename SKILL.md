@@ -48,14 +48,24 @@ Use:
 
 Claude does not receive Edit/Write tools, but Bash under `bypassPermissions` is
 not read-only. Use this only in trusted local repos and check `git status` after
-the run.
+the run. The helper sends eligible untracked text files to Claude, but skips
+untracked paths that look like credentials such as `.env`, `.env.*`, private
+keys, `.npmrc`, `.pypirc`, and non-source names containing `secret`, `token`,
+`credential`, or `password`.
+
+The helper runs `claude-opus-4-8` at max effort by default. Override deliberately
+with `CLAUDE_REVIEW_MODEL` or `CLAUDE_REVIEW_EFFORT` only when the review does
+not need the default scrutiny.
 
 ## Observe
 
-Let the user watch the visible Zellij/Ghostty session. First check the done
-marker after 2-3 minutes, then poll the marker/handoff paths printed by the
-helper. The marker holds Claude's exit code. If the run behaves ambiguously,
-read [references/observing-zellij.md](references/observing-zellij.md).
+Let the user watch the visible Zellij session. On macOS with Ghostty, the helper
+opens a watching tab automatically. If Ghostty auto-open is unavailable, the
+review still runs and the printed `zellij attach <session>` command is the
+manual watch path. First check the done marker after 2-3 minutes, then poll the
+marker/handoff paths printed by the helper. The marker holds Claude's exit code.
+If the run behaves ambiguously, read
+[references/observing-zellij.md](references/observing-zellij.md).
 
 ## Verify Gate
 

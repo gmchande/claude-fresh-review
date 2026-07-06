@@ -111,4 +111,4 @@ test gap.
 - Summarize changed files and validation.
 - If fixes materially change the diff, one follow-up Claude review is reasonable; avoid review loops.
 
-Once the verify gate is done and fixes, if any, are applied, delete the one-off Zellij session with the printed cleanup command. Skipping this cleanup accumulates dead sessions.
+Leave the Zellij session open after the verify gate; the user often has follow-up prompts, and the printed `claude --resume` command reaches the same Claude session from the repo root even after cleanup. Delete the session with the printed cleanup command only when the user says they are done.

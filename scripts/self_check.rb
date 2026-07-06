@@ -59,9 +59,25 @@ def assert_includes(text, needle, label)
   assert(text.include?(needle), "#{label}: expected output to include #{needle.inspect}")
 end
 
-def run_stream_printer(handoff_path, *events)
+def run_stream_printer(handoff_path, session_id_path, *events)
   input = events.map(&:to_json).join("\n") + "\n"
-  Open3.capture3("ruby", STREAM_PRINTER, handoff_path, stdin_data: input)
+  Open3.capture3("ruby", STREAM_PRINTER, handoff_path, session_id_path, stdin_data: input)
+end
+
+def test_stream_printer_writes_session_id_from_init
+  dir = Dir.mktmpdir("cfr-printer-")
+  session_id_path = File.join(dir, "session-id.txt")
+
+  _stdout, stderr, status = run_stream_printer(
+    File.join(dir, "handoff.md"),
+    session_id_path,
+    { "type" => "system", "subtype" => "init", "session_id" => "abc-123", "model" => "m", "cwd" => dir }
+  )
+
+  assert(status.success?, "stream printer should exit successfully: #{stderr}")
+  assert(File.binread(session_id_path) == "abc-123", "stream printer should write the session id")
+ensure
+  FileUtils.rm_rf(dir) if dir
 end
 
 def test_stream_printer_writes_missing_handoff_from_result
@@ -71,6 +87,7 @@ def test_stream_printer_writes_missing_handoff_from_result
 
   _stdout, stderr, status = run_stream_printer(
     handoff_path,
+    File.join(dir, "session-id.txt"),
     { "type" => "result", "subtype" => "success", "result" => result_text }
   )
 
@@ -90,6 +107,7 @@ def test_stream_printer_preserves_non_empty_handoff
 
   _stdout, stderr, status = run_stream_printer(
     handoff_path,
+    File.join(dir, "session-id.txt"),
     { "type" => "result", "subtype" => "success", "result" => "Fallback handoff\n" }
   )
 
@@ -278,6 +296,7 @@ ensure
 end
 
 tests = [
+  method(:test_stream_printer_writes_session_id_from_init),
   method(:test_stream_printer_writes_missing_handoff_from_result),
   method(:test_stream_printer_preserves_non_empty_handoff),
   method(:test_dirty_diff),

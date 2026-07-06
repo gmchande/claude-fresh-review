@@ -17,6 +17,7 @@ module ClaudeVisibleSession
     system_prompt_path:,
     handoff_path: nil,
     done_marker_path: nil,
+    session_id_path: nil,
     prompt_label:,
     sent_message:
   )
@@ -33,7 +34,8 @@ module ClaudeVisibleSession
 
     handoff_path ||= default_handoff_path(prompt_path)
     done_marker_path ||= default_done_marker_path(prompt_path)
-    FileUtils.rm_f([handoff_path, done_marker_path])
+    session_id_path ||= default_session_id_path(prompt_path)
+    FileUtils.rm_f([handoff_path, done_marker_path, session_id_path])
     File.open(system_prompt_path, "a") do |file|
       file.write("\n")
       file.write(completion_handoff_instructions(handoff_path))
@@ -86,6 +88,7 @@ module ClaudeVisibleSession
     puts "System prompt: #{system_prompt_path}"
     puts "Handoff file: #{handoff_path}"
     puts "Done marker: #{done_marker_path}"
+    puts "Claude session id: #{session_id_path} (written when the run starts)"
     puts "Ghostty auto-open: #{ghostty_opened ? "opened" : "unavailable; use the watch command below"}"
     puts
     puts "Watch:"
@@ -104,7 +107,10 @@ module ClaudeVisibleSession
     puts "Session state diagnostic:"
     puts zellij_shell_command("list-sessions")
     puts
-    puts "Cleanup after triage:"
+    puts "Follow up with the same Claude session (run from the repo root):"
+    puts "cd #{repo_root.shellescape} && claude --resume \"$(cat #{session_id_path.shellescape})\""
+    puts
+    puts "Cleanup (only when the user says they are done with this run; leave the session open for follow-ups otherwise):"
     puts "#{zellij_shell_command("kill-session", session)} # if still attached"
     puts zellij_shell_command("delete-session", "--force", session)
     puts
@@ -220,6 +226,12 @@ module ClaudeVisibleSession
     return prompt_path.sub(/\.md\z/, ".done") if prompt_path.end_with?(".md")
 
     "#{prompt_path}.done"
+  end
+
+  def default_session_id_path(prompt_path)
+    return prompt_path.sub(/\.md\z/, "-session-id.txt") if prompt_path.end_with?(".md")
+
+    "#{prompt_path}-session-id.txt"
   end
 
   def diagnostic_screen_path(skill_name, session)

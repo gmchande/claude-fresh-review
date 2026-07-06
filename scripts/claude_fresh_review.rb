@@ -392,7 +392,7 @@ def zellij_session_name(options)
   "cfr-#{Time.now.utc.strftime("%H%M%S")}"
 end
 
-def claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path)
+def claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path, session_id_path)
   stream_printer_path = File.expand_path("claude_stream_printer.rb", __dir__)
   cmd = [
     "claude",
@@ -417,7 +417,7 @@ def claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_m
 
   [
     "set -o pipefail",
-    "#{cmd.shelljoin} < #{prompt_path.shellescape} 2>&1 | ruby #{stream_printer_path.shellescape} #{handoff_path.shellescape}",
+    "#{cmd.shelljoin} < #{prompt_path.shellescape} 2>&1 | ruby #{stream_printer_path.shellescape} #{handoff_path.shellescape} #{session_id_path.shellescape}",
     "rc=$?",
     "echo $rc > #{done_marker_path.shellescape}",
     "echo",
@@ -432,7 +432,8 @@ def run_zellij_review(system_prompt, payload, repo_root, options)
   system_prompt_path = write_system_prompt(system_prompt, prompt_path)
   handoff_path = ClaudeVisibleSession.default_handoff_path(prompt_path)
   done_marker_path = ClaudeVisibleSession.default_done_marker_path(prompt_path)
-  cmd = claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path)
+  session_id_path = ClaudeVisibleSession.default_session_id_path(prompt_path)
+  cmd = claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path, session_id_path)
 
   ClaudeVisibleSession.run_session(
     skill_name: "claude-fresh-review",
@@ -444,6 +445,7 @@ def run_zellij_review(system_prompt, payload, repo_root, options)
     system_prompt_path: system_prompt_path,
     handoff_path: handoff_path,
     done_marker_path: done_marker_path,
+    session_id_path: session_id_path,
     prompt_label: "review task",
     sent_message: "Claude review started in Zellij session"
   )

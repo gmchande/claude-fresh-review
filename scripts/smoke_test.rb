@@ -72,6 +72,21 @@ ensure
   FileUtils.rm_rf(repo) if repo
 end
 
+def test_default_model_and_effort
+  repo = init_repo
+  write(repo, "app.txt", "hello\n")
+  commit_all(repo, "initial")
+  write(repo, "app.txt", "hello changed\n")
+
+  output, status = dry_run(repo, "--intent", "Review defaults")
+
+  assert(status.success?, "default model dry-run should succeed")
+  assert_includes(output, "Claude model: claude-fable-5", "default model")
+  assert_includes(output, "Claude effort: xhigh", "default effort")
+ensure
+  FileUtils.rm_rf(repo) if repo
+end
+
 def test_clean_branch_with_base
   repo = init_repo
   write(repo, "app.txt", "base\n")
@@ -192,15 +207,70 @@ ensure
   FileUtils.rm_rf(repo) if repo
 end
 
+def test_project_context_includes_parent_and_repo_authority_files
+  parent = Dir.mktmpdir("cfr-context-parent-")
+  repo = File.join(parent, "child")
+  FileUtils.mkdir_p(repo)
+
+  write(parent, "AGENTS.md", "# Parent guidance\n\nUse the small-app rules when judging architecture.\n")
+  write(repo, "AGENTS.md", "# Child guidance\n\nPrefer JSON until durable querying is real.\n")
+  write(repo, "CLAUDE.md", "@AGENTS.md\n")
+  git(repo, "init")
+  git(repo, "config", "user.email", "smoke@example.test")
+  git(repo, "config", "user.name", "Smoke Test")
+  write(repo, "app.txt", "hello\n")
+  commit_all(repo, "initial")
+  write(repo, "app.txt", "hello changed\n")
+
+  output, status = dry_run(repo, "--intent", "Review project context")
+
+  assert(status.success?, "project context dry-run should succeed")
+  assert_includes(output, "Project context (auto-loaded from authority files", "project context")
+  assert_includes(output, "Use the small-app rules when judging architecture.", "project context")
+  assert_includes(output, "Prefer JSON until durable querying is real.", "project context")
+  assert_includes(output, "### ../AGENTS.md", "project context")
+  assert_includes(output, "### AGENTS.md", "project context")
+  assert_includes(output, "### CLAUDE.md", "project context")
+ensure
+  FileUtils.rm_rf(parent) if parent
+end
+
+def test_project_context_skips_ignored_repo_authority_files
+  parent = Dir.mktmpdir("cfr-context-ignored-")
+  repo = File.join(parent, "child")
+  FileUtils.mkdir_p(repo)
+
+  write(parent, "AGENTS.md", "# Parent guidance\n\nVisible parent context.\n")
+  write(repo, ".gitignore", "CLAUDE.md\n")
+  write(repo, "app.txt", "hello\n")
+  git(repo, "init")
+  git(repo, "config", "user.email", "smoke@example.test")
+  git(repo, "config", "user.name", "Smoke Test")
+  commit_all(repo, "initial")
+  write(repo, "app.txt", "hello changed\n")
+  write(repo, "CLAUDE.md", "LEAK_ME_IGNORED_CONTEXT=1\n")
+
+  output, status = dry_run(repo, "--intent", "Review ignored context")
+
+  assert(status.success?, "ignored authority dry-run should succeed")
+  assert_includes(output, "Visible parent context.", "ignored authority")
+  assert(!output.include?("LEAK_ME_IGNORED_CONTEXT"), "ignored authority: should not include ignored CLAUDE.md contents")
+ensure
+  FileUtils.rm_rf(parent) if parent
+end
+
 tests = [
   method(:test_dirty_diff),
+  method(:test_default_model_and_effort),
   method(:test_clean_branch_with_base),
   method(:test_unborn_untracked),
   method(:test_secret_untracked_skip),
   method(:test_missing_plan),
   method(:test_binary_untracked_skip),
   method(:test_artifact_only),
-  method(:test_dirty_artifact_includes_diff)
+  method(:test_dirty_artifact_includes_diff),
+  method(:test_project_context_includes_parent_and_repo_authority_files),
+  method(:test_project_context_skips_ignored_repo_authority_files)
 ]
 
 tests.each do |test|

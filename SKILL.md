@@ -13,6 +13,10 @@ authority: verify every finding against the real repo before acting on it.
 Confirm the target repo root. Do not run from a parent directory containing
 unrelated repos. Use `--doctor` if the visible review environment is uncertain.
 
+The helper auto-loads `AGENTS.md` and `CLAUDE.md` from the repo root and
+ancestor directories, so Claude sees project shape, stack, taste, and parent
+guidance before judging the diff or artifact.
+
 Before the verification checkpoint, do not call `apply_patch`, run
 formatters/generators/autofixers, stage, commit, push, or modify repo files.
 
@@ -42,7 +46,7 @@ Use:
 - `--artifact PATH` to include a document, plan, workflow, or prompt. It is
   artifact-only when the worktree is clean; otherwise it reviews the artifact
   alongside the current diff.
-- `--intent "..."` when the intent lives only in conversation.
+- `--intent "..."` for the product/user goal and any conversation-only nuance.
 - `--base REF` for already-committed branch work.
 - `--dry-run` to inspect the prompt bundle without launching Claude.
 
@@ -53,7 +57,7 @@ untracked paths that look like credentials such as `.env`, `.env.*`, private
 keys, `.npmrc`, `.pypirc`, and non-source names containing `secret`, `token`,
 `credential`, or `password`.
 
-The helper runs `claude-opus-4-8` at max effort by default. Override deliberately
+The helper runs `claude-fable-5` at xhigh effort by default. Override deliberately
 with `CLAUDE_REVIEW_MODEL` or `CLAUDE_REVIEW_EFFORT` only when the review does
 not need the default scrutiny.
 

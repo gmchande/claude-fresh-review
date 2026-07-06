@@ -1,6 +1,6 @@
 interface:
   display_name: "Claude Fresh Review"
-  short_description: "Manual Claude/Zellij review gate"
+  short_description: "Claude/Zellij review gate with repo context"
   default_prompt: "Use $claude-fresh-review to launch a visible Claude review of the current diff or artifact, then verify and checkpoint the findings before editing."
 
 policy:

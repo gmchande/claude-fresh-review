@@ -11,11 +11,12 @@ The core runner uses Ruby, Git, zsh, Zellij, and the Claude Code CLI. On macOS w
 - Reviews a dirty working tree against `HEAD`, including untracked text files that do not look like credentials.
 - Reviews new experiment repos before the first commit by comparing tracked changes to Git's empty tree and bundling untracked text files while skipping likely credential filenames.
 - Reviews already-committed work with `--base HEAD~1` or branch work with `--base main`. On dirty trees, `--base` reviews the working tree against the merge base so committed branch work and uncommitted changes are both included.
+- Auto-loads `AGENTS.md` and `CLAUDE.md` from the repo root and ancestor directories so Claude sees project shape, stack, taste, and parent guidance before judging the work.
 - Accepts plan or PRD context with `--plan`.
 - Reviews repo artifacts with `--artifact`; artifact-only when the worktree is clean.
 - Accepts conversation-level intent with `--intent`.
 - Checks local dependencies with `--doctor`.
-- Runs Claude Code in a new, one-off visible Zellij session with `claude-opus-4-8`, max effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
+- Runs Claude Code in a new, one-off visible Zellij session with `claude-fable-5`, xhigh effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
 - Does not grant Claude Code `Edit` or `Write`, but `Bash` is still shell access without per-command permission prompts. Use it for trusted local repos and artifacts.
 - Opens a Ghostty tab attached to the Zellij session when available and always prints the exact attach, inspect, and interrupt commands.
@@ -128,7 +129,7 @@ ruby ~/.codex/skills/claude-fresh-review/scripts/smoke_test.rb
 
 ## Security Notes
 
-Run this only in local repos and artifacts you trust. Claude receives the git diff, supplied plan or artifact, and eligible untracked text files. Untracked paths that look like credentials are skipped by default, including `.env`, `.env.*`, `.npmrc`, `.pypirc`, SSH/AWS/Kube/GnuPG directories, private-key extensions, and non-source filenames containing tokens such as `secret`, `token`, `credential`, or `password`.
+Run this only in local repos and artifacts you trust. Claude receives the git diff, supplied plan or artifact, auto-loaded authority files, and eligible untracked text files. Authority files are `AGENTS.md` and `CLAUDE.md` from the repo root and ancestor directories, capped at 120 KB per file and 240 KB total. Repo-local authority files ignored by Git are skipped. Untracked paths that look like credentials are skipped by default, including `.env`, `.env.*`, `.npmrc`, `.pypirc`, SSH/AWS/Kube/GnuPG directories, private-key extensions, and non-source filenames containing tokens such as `secret`, `token`, `credential`, or `password`.
 
 The skip-list is a guardrail, not a secrets scanner. Keep real secrets ignored, removed, or outside the repo before review. Prompt bundles and system prompts are written into an owner-only temp directory with owner-only file permissions.
 
@@ -149,7 +150,7 @@ The helper writes the assembled prompt bundle, system prompt, handoff file, and 
 
 ## Review posture
 
-The skill asks Claude to report concrete behavioral findings with severity and confidence. Codex should verify and filter those findings against the real repo. When you pass a plan or intent, Claude is asked to critique the plan itself, not only whether the diff follows it. A perfectly executed wrong plan is still a review finding.
+The skill asks Claude to report concrete behavioral findings with severity and confidence. Codex should verify and filter those findings against the real repo. The helper includes repo authority files automatically; use `--intent` for conversation-only product goals, user constraints, or nuance that is not written down. When you pass a plan or intent, Claude is asked to critique the plan itself, not only whether the diff follows it. A perfectly executed wrong plan is still a review finding.
 
 ## License
 

@@ -4,6 +4,7 @@
 require "fileutils"
 require "open3"
 require "optparse"
+require "pathname"
 require "shellwords"
 require "tmpdir"
 require_relative "claude_visible_session"
@@ -11,8 +12,11 @@ require_relative "claude_visible_session"
 MAX_DIFF_BYTES = 200_000
 MAX_UNTRACKED_BYTES = 200_000
 MAX_UNTRACKED_BUNDLE_BYTES = 500_000
-CLAUDE_MODEL = ENV.fetch("CLAUDE_REVIEW_MODEL", "claude-opus-4-8")
-CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "max")
+AUTHORITY_CONTEXT_FILES = %w[AGENTS.md CLAUDE.md].freeze
+MAX_PROJECT_CONTEXT_FILE_BYTES = 120_000
+MAX_PROJECT_CONTEXT_BUNDLE_BYTES = 240_000
+CLAUDE_MODEL = ENV.fetch("CLAUDE_REVIEW_MODEL", "claude-fable-5")
+CLAUDE_EFFORT = ENV.fetch("CLAUDE_REVIEW_EFFORT", "xhigh")
 CLAUDE_PERMISSION_MODE = "bypassPermissions"
 CLAUDE_REVIEW_TOOLS = "Read,Grep,Glob,Bash,WebSearch,WebFetch"
 SECRET_DIR_NAMES = %w[.aws .azure .gnupg .kube .ssh].freeze
@@ -126,6 +130,104 @@ end
 
 def read_artifact(path)
   read_context_file(path, "Artifact")
+end
+
+def project_context_dirs(repo_root)
+  dirs = []
+  current = File.expand_path(repo_root)
+  home = File.expand_path(Dir.home)
+
+  loop do
+    dirs << current
+    break if current == home || current == "/"
+
+    parent = File.dirname(current)
+    break if parent == current
+
+    current = parent
+  end
+
+  dirs.reverse
+end
+
+def project_context_paths(repo_root)
+  seen = {}
+
+  project_context_dirs(repo_root).flat_map do |dir|
+    AUTHORITY_CONTEXT_FILES.map { |name| File.join(dir, name) }
+  end.select do |path|
+    if File.file?(path) && !seen[path] && !git_ignored_authority_file?(path, repo_root)
+      seen[path] = true
+    end
+  end
+end
+
+def path_within?(path, dir)
+  expanded_path = File.expand_path(path)
+  expanded_dir = File.expand_path(dir)
+
+  expanded_path == expanded_dir || expanded_path.start_with?("#{expanded_dir}#{File::SEPARATOR}")
+end
+
+def git_ignored_authority_file?(path, repo_root)
+  return false unless path_within?(path, repo_root)
+
+  relative_path = Pathname.new(File.expand_path(path)).relative_path_from(Pathname.new(File.expand_path(repo_root))).to_s
+  _stdout, _stderr, status = run("git", "-C", repo_root, "check-ignore", "--quiet", "--", relative_path, allow_failure: true)
+  status.success?
+end
+
+def relative_context_path(path, repo_root)
+  Pathname.new(path).relative_path_from(Pathname.new(repo_root)).to_s
+rescue ArgumentError
+  path
+end
+
+def project_context_file_section(path, repo_root)
+  label = relative_context_path(path, repo_root)
+
+  if !likely_text_file?(path)
+    ["### #{label}\n\nSkipped: not a readable text file.\n", false]
+  else
+    text, truncated = truncate_text(File.read(path), MAX_PROJECT_CONTEXT_FILE_BYTES, "project context #{label}")
+    ["### #{label}\n\n```markdown\n#{text}\n```\n", truncated]
+  end
+rescue Errno::ENOENT, Errno::EACCES
+  ["### #{label}\n\nSkipped: file disappeared or became unreadable.\n", false]
+end
+
+def project_context_bundle(repo_root)
+  paths = project_context_paths(repo_root)
+  return ["", []] if paths.empty?
+
+  sections = []
+  truncated = []
+  total_bytes = 0
+
+  paths.each do |path|
+    section, section_truncated = project_context_file_section(path, repo_root)
+    section_bytes = section.bytesize
+
+    if total_bytes + section_bytes > MAX_PROJECT_CONTEXT_BUNDLE_BYTES
+      label = relative_context_path(path, repo_root)
+      sections << "### #{label}\n\nSkipped: project context bundle exceeded #{MAX_PROJECT_CONTEXT_BUNDLE_BYTES} bytes.\n"
+      truncated << label
+      break
+    end
+
+    total_bytes += section_bytes
+    sections << section
+    truncated << relative_context_path(path, repo_root) if section_truncated
+  end
+
+  [
+    <<~TEXT,
+      Project context (auto-loaded from authority files; broader ancestor files appear first and closer files override earlier guidance):
+
+      #{sections.join("\n")}
+    TEXT
+    truncated
+  ]
 end
 
 def macos_app_available?(name)
@@ -371,6 +473,7 @@ Dir.chdir(repo_root)
 
 plan_text = read_plan(options[:plan])
 artifact_text, artifact_truncated = read_artifact(options[:artifact])
+project_context, project_context_truncated = project_context_bundle(repo_root)
 status_short = git("status", "--short")
 dirty = !status_short.strip.empty?
 
@@ -428,7 +531,10 @@ end
 reviewer_persona = <<~PROMPT
   You are reviewing a git diff or supplied project artifact with fresh eyes after another agent planned or changed it.
 
+  Read the bundled project context before judging the work. Use it to calibrate product fit, stack choice, taste, scope, and what counts as over-engineering for this repo. If project context conflicts with generic best practice, project context wins unless it creates a concrete correctness, security, or data-loss risk.
+
   Review axes, in order:
+  - Product/context fit: does the work match who this project is for, how it is operated, and the intended level of engineering?
   - Intent/spec fit: does the diff or artifact do what the stated plan, PRD, issue, or intent requires?
   - Repo constraints: does it follow AGENTS.md/CLAUDE.md, stack, style, scope, and safety boundaries?
   - Behavioral correctness: could it break user flows, checks, data, security/privacy, or workflow assumptions?
@@ -455,6 +561,8 @@ payload = <<~PROMPT
   Repository: #{repo_root}
   Review target: #{target_label}
 
+  #{project_context}
+  #{project_context_truncated.empty? ? "" : "Project context was truncated for: #{project_context_truncated.join(", ")}. Inspect the real repo before relying on missing context."}
   #{options[:intent] ? "Task intent:\n#{options[:intent]}\n" : ""}
   #{plan_text ? "Plan / PRD / artifact context:\n#{plan_text}\n" : ""}
   #{artifact_text ? "Artifact under review: #{options[:artifact]}\n```text\n#{artifact_text}\n```\n" : ""}

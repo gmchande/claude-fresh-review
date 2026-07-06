@@ -235,30 +235,6 @@ ensure
   FileUtils.rm_rf(parent) if parent
 end
 
-def test_project_context_skips_ignored_repo_authority_files
-  parent = Dir.mktmpdir("cfr-context-ignored-")
-  repo = File.join(parent, "child")
-  FileUtils.mkdir_p(repo)
-
-  write(parent, "AGENTS.md", "# Parent guidance\n\nVisible parent context.\n")
-  write(repo, ".gitignore", "CLAUDE.md\n")
-  write(repo, "app.txt", "hello\n")
-  git(repo, "init")
-  git(repo, "config", "user.email", "smoke@example.test")
-  git(repo, "config", "user.name", "Smoke Test")
-  commit_all(repo, "initial")
-  write(repo, "app.txt", "hello changed\n")
-  write(repo, "CLAUDE.md", "LEAK_ME_IGNORED_CONTEXT=1\n")
-
-  output, status = dry_run(repo, "--intent", "Review ignored context")
-
-  assert(status.success?, "ignored authority dry-run should succeed")
-  assert_includes(output, "Visible parent context.", "ignored authority")
-  assert(!output.include?("LEAK_ME_IGNORED_CONTEXT"), "ignored authority: should not include ignored CLAUDE.md contents")
-ensure
-  FileUtils.rm_rf(parent) if parent
-end
-
 tests = [
   method(:test_dirty_diff),
   method(:test_default_model_and_effort),
@@ -269,8 +245,7 @@ tests = [
   method(:test_binary_untracked_skip),
   method(:test_artifact_only),
   method(:test_dirty_artifact_includes_diff),
-  method(:test_project_context_includes_parent_and_repo_authority_files),
-  method(:test_project_context_skips_ignored_repo_authority_files)
+  method(:test_project_context_includes_parent_and_repo_authority_files)
 ]
 
 tests.each do |test|

@@ -129,7 +129,7 @@ ruby ~/.codex/skills/claude-fresh-review/scripts/smoke_test.rb
 
 ## Security Notes
 
-Run this only in local repos and artifacts you trust. Claude receives the git diff, supplied plan or artifact, auto-loaded authority files, and eligible untracked text files. Authority files are `AGENTS.md` and `CLAUDE.md` from the repo root and ancestor directories, capped at 120 KB per file and 240 KB total. Repo-local authority files ignored by Git are skipped. Untracked paths that look like credentials are skipped by default, including `.env`, `.env.*`, `.npmrc`, `.pypirc`, SSH/AWS/Kube/GnuPG directories, private-key extensions, and non-source filenames containing tokens such as `secret`, `token`, `credential`, or `password`.
+Run this only in local repos and artifacts you trust. Claude receives the git diff, supplied plan or artifact, auto-loaded authority files, and eligible untracked text files. Authority files are `AGENTS.md` and `CLAUDE.md` from the repo root and ancestor directories, capped at 120 KB per file and 240 KB total. Untracked paths that look like credentials are skipped by default, including `.env`, `.env.*`, `.npmrc`, `.pypirc`, SSH/AWS/Kube/GnuPG directories, private-key extensions, and non-source filenames containing tokens such as `secret`, `token`, `credential`, or `password`.
 
 The skip-list is a guardrail, not a secrets scanner. Keep real secrets ignored, removed, or outside the repo before review. Prompt bundles and system prompts are written into an owner-only temp directory with owner-only file permissions.
 

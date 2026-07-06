@@ -154,27 +154,12 @@ def project_context_paths(repo_root)
   seen = {}
 
   project_context_dirs(repo_root).flat_map do |dir|
-    AUTHORITY_CONTEXT_FILES.map { |name| File.join(dir, name) }
+  AUTHORITY_CONTEXT_FILES.map { |name| File.join(dir, name) }
   end.select do |path|
-    if File.file?(path) && !seen[path] && !git_ignored_authority_file?(path, repo_root)
+    if File.file?(path) && !seen[path]
       seen[path] = true
     end
   end
-end
-
-def path_within?(path, dir)
-  expanded_path = File.expand_path(path)
-  expanded_dir = File.expand_path(dir)
-
-  expanded_path == expanded_dir || expanded_path.start_with?("#{expanded_dir}#{File::SEPARATOR}")
-end
-
-def git_ignored_authority_file?(path, repo_root)
-  return false unless path_within?(path, repo_root)
-
-  relative_path = Pathname.new(File.expand_path(path)).relative_path_from(Pathname.new(File.expand_path(repo_root))).to_s
-  _stdout, _stderr, status = run("git", "-C", repo_root, "check-ignore", "--quiet", "--", relative_path, allow_failure: true)
-  status.success?
 end
 
 def relative_context_path(path, repo_root)

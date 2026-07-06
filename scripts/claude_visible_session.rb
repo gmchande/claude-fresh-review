@@ -15,6 +15,8 @@ module ClaudeVisibleSession
     claude_shell_command:,
     prompt_path:,
     system_prompt_path:,
+    handoff_path: nil,
+    done_marker_path: nil,
     prompt_label:,
     sent_message:
   )
@@ -29,8 +31,8 @@ module ClaudeVisibleSession
       exit 1
     end
 
-    handoff_path = default_handoff_path(prompt_path)
-    done_marker_path = default_done_marker_path(prompt_path)
+    handoff_path ||= default_handoff_path(prompt_path)
+    done_marker_path ||= default_done_marker_path(prompt_path)
     FileUtils.rm_f([handoff_path, done_marker_path])
     File.open(system_prompt_path, "a") do |file|
       file.write("\n")
@@ -101,6 +103,10 @@ module ClaudeVisibleSession
     puts
     puts "Session state diagnostic:"
     puts zellij_shell_command("list-sessions")
+    puts
+    puts "Cleanup after triage:"
+    puts "#{zellij_shell_command("kill-session", session)} # if still attached"
+    puts zellij_shell_command("delete-session", "--force", session)
     puts
     puts "Full transcript (diagnostic only, writes to a temp file):"
     puts zellij_shell_command("--session", session, "action", "dump-screen", "--pane-id", pane_id, "--full", "--path", diagnostic_screen_path(skill_name, session))
@@ -187,7 +193,7 @@ module ClaudeVisibleSession
   end
 
   def delete_zellij_session(session)
-    zellij("delete-session", session, "--force", allow_failure: true)
+    zellij("delete-session", "--force", session, allow_failure: true)
   end
 
   def completion_handoff_instructions(handoff_path)

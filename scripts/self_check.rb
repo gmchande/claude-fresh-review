@@ -2,10 +2,12 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "open3"
 require "tmpdir"
 
 HELPER = File.expand_path("claude_fresh_review.rb", __dir__)
+STREAM_PRINTER = File.expand_path("claude_stream_printer.rb", __dir__)
 
 def run_cmd(repo, *cmd, allow_failure: false)
   stdout, stderr, status = Open3.capture3(*cmd, chdir: repo)
@@ -55,6 +57,46 @@ end
 
 def assert_includes(text, needle, label)
   assert(text.include?(needle), "#{label}: expected output to include #{needle.inspect}")
+end
+
+def run_stream_printer(handoff_path, *events)
+  input = events.map(&:to_json).join("\n") + "\n"
+  Open3.capture3("ruby", STREAM_PRINTER, handoff_path, stdin_data: input)
+end
+
+def test_stream_printer_writes_missing_handoff_from_result
+  dir = Dir.mktmpdir("cfr-printer-")
+  handoff_path = File.join(dir, "handoff.md")
+  result_text = "Final review handoff\n"
+
+  _stdout, stderr, status = run_stream_printer(
+    handoff_path,
+    { "type" => "result", "subtype" => "success", "result" => result_text }
+  )
+
+  assert(status.success?, "stream printer should exit successfully: #{stderr}")
+  assert(File.file?(handoff_path), "stream printer should create handoff")
+  assert(File.binread(handoff_path) == result_text, "stream printer should write result text")
+  assert((File.stat(handoff_path).mode & 0o777) == 0o600, "stream printer handoff should be mode 0600")
+ensure
+  FileUtils.rm_rf(dir) if dir
+end
+
+def test_stream_printer_preserves_non_empty_handoff
+  dir = Dir.mktmpdir("cfr-printer-")
+  handoff_path = File.join(dir, "handoff.md")
+  original_text = "Claude wrote a structured handoff\n"
+  File.binwrite(handoff_path, original_text)
+
+  _stdout, stderr, status = run_stream_printer(
+    handoff_path,
+    { "type" => "result", "subtype" => "success", "result" => "Fallback handoff\n" }
+  )
+
+  assert(status.success?, "stream printer should exit successfully: #{stderr}")
+  assert(File.binread(handoff_path) == original_text, "stream printer should not overwrite non-empty handoff")
+ensure
+  FileUtils.rm_rf(dir) if dir
 end
 
 def test_dirty_diff
@@ -236,6 +278,8 @@ ensure
 end
 
 tests = [
+  method(:test_stream_printer_writes_missing_handoff_from_result),
+  method(:test_stream_printer_preserves_non_empty_handoff),
   method(:test_dirty_diff),
   method(:test_default_model_and_effort),
   method(:test_clean_branch_with_base),

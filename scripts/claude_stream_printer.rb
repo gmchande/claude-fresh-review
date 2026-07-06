@@ -2,10 +2,13 @@
 # frozen_string_literal: true
 
 require "json"
+require "fileutils"
 
 MAX_TOOL_OUTPUT_CHARS = 4_000
 
 $stdout.sync = true
+
+handoff_path = ARGV[0]
 
 def summarize_tool_input(input)
   if input.is_a?(Hash)
@@ -67,6 +70,20 @@ def print_tool_result(result)
   printed
 end
 
+def write_result_handoff(path, result)
+  return if path.to_s.empty?
+  return unless result.is_a?(String) && !result.empty?
+  return if File.exist?(path) && !File.zero?(path)
+
+  FileUtils.mkdir_p(File.dirname(path))
+  File.open(path, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |file|
+    file.write(result)
+  end
+  FileUtils.chmod(0o600, path)
+rescue SystemCallError => e
+  warn "[claude] could not write handoff fallback: #{e.message}"
+end
+
 STDIN.each_line do |line|
   event = JSON.parse(line)
 
@@ -108,6 +125,7 @@ STDIN.each_line do |line|
       end
     end
   when "result"
+    write_result_handoff(handoff_path, event["result"])
     puts
     puts "[claude] finished: #{event["subtype"] || event["status"] || "done"}"
   else

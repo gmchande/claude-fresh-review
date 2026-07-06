@@ -23,10 +23,10 @@ def git(repo, *args)
 end
 
 def init_repo
-  repo = Dir.mktmpdir("cfr-smoke-")
+  repo = Dir.mktmpdir("cfr-check-")
   git(repo, "init")
-  git(repo, "config", "user.email", "smoke@example.test")
-  git(repo, "config", "user.name", "Smoke Test")
+  git(repo, "config", "user.email", "check@example.test")
+  git(repo, "config", "user.name", "Self Check")
   repo
 end
 
@@ -216,8 +216,8 @@ def test_project_context_includes_parent_and_repo_authority_files
   write(repo, "AGENTS.md", "# Child guidance\n\nPrefer JSON until durable querying is real.\n")
   write(repo, "CLAUDE.md", "@AGENTS.md\n")
   git(repo, "init")
-  git(repo, "config", "user.email", "smoke@example.test")
-  git(repo, "config", "user.name", "Smoke Test")
+  git(repo, "config", "user.email", "check@example.test")
+  git(repo, "config", "user.name", "Self Check")
   write(repo, "app.txt", "hello\n")
   commit_all(repo, "initial")
   write(repo, "app.txt", "hello changed\n")
@@ -253,4 +253,4 @@ tests.each do |test|
   puts "PASS #{test.name}"
 end
 
-puts "All smoke tests passed."
+puts "All self-checks passed."

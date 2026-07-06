@@ -121,10 +121,10 @@ Inspect the prompt bundle without calling Claude:
 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --dry-run --intent "Check prompt"
 ```
 
-Run deterministic smoke tests:
+Run deterministic self-checks:
 
 ```sh
-ruby ~/.codex/skills/claude-fresh-review/scripts/smoke_test.rb
+ruby ~/.codex/skills/claude-fresh-review/scripts/self_check.rb
 ```
 
 ## Security Notes

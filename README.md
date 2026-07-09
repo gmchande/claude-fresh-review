@@ -1,6 +1,6 @@
-# claude-fresh-review
+# claude-review
 
-A Codex skill that asks Claude Code for a fresh-eyes review of the current git diff or project artifact.
+A Codex skill that asks Claude Code for an independent review of the current git diff or project artifact.
 
 The intended workflow is simple: use Codex for planning and implementation, then launch Claude Code in a visible Zellij session as an independent reviewer before you keep moving. The review posture is pragmatic and thorough for serious small projects: catch correctness bugs, broken flows, data loss, security footguns, unclear plans, brittle workflow assumptions, and poor fit with the existing project style without drifting into enterprise hardening or speculative architecture review.
 
@@ -26,7 +26,7 @@ The core runner uses Ruby, Git, zsh, Zellij, and the Claude Code CLI. On macOS w
 Clone into your Codex skills directory:
 
 ```sh
-git clone https://github.com/gmchande/claude-fresh-review.git "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review"
+git clone https://github.com/gmchande/claude-review.git "${CODEX_HOME:-$HOME/.codex}/skills/claude-review"
 ```
 
 If your Codex setup loads personal skills from another directory, clone it there instead.
@@ -34,7 +34,7 @@ If your Codex setup loads personal skills from another directory, clone it there
 The helper script should be executable after cloning. If needed:
 
 ```sh
-chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-fresh-review/scripts/claude_fresh_review.rb"
+chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-review/scripts/claude_review.rb"
 ```
 
 ## Requirements
@@ -60,7 +60,7 @@ mkdir -p "$ZELLIJ_SOCKET_DIR"
 From Codex, invoke the skill by name:
 
 ```text
-Use $claude-fresh-review to review the current diff with intent: "What changed and why"
+Use $claude-review to review the current diff with intent: "What changed and why"
 ```
 
 Codex should launch the helper, read Claude's handoff, verify the findings against the repo, and stop at a checkpoint before making edits.
@@ -68,49 +68,49 @@ Codex should launch the helper, read Claude's handoff, verify the findings again
 From a repo you want reviewed:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "What changed and why"
+~/.codex/skills/claude-review/scripts/claude_review.rb --intent "What changed and why"
 ```
 
 Include plan context when available:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --plan docs/plan.md
+~/.codex/skills/claude-review/scripts/claude_review.rb --plan docs/plan.md
 ```
 
 Review a standalone repo artifact when the worktree is clean:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --artifact docs/plan.md
+~/.codex/skills/claude-review/scripts/claude_review.rb --artifact docs/plan.md
 ```
 
 Review already-committed work:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --base HEAD~1
+~/.codex/skills/claude-review/scripts/claude_review.rb --base HEAD~1
 ```
 
 Check local review dependencies:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --doctor
+~/.codex/skills/claude-review/scripts/claude_review.rb --doctor
 ```
 
 Use less effort for simpler diffs:
 
 ```sh
-CLAUDE_REVIEW_EFFORT=medium ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Mechanical rename"
+CLAUDE_REVIEW_EFFORT=medium ~/.codex/skills/claude-review/scripts/claude_review.rb --intent "Mechanical rename"
 ```
 
 Test another Claude model deliberately:
 
 ```sh
-CLAUDE_REVIEW_MODEL=claude-sonnet-4-6 ~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --intent "Review the current diff"
+CLAUDE_REVIEW_MODEL=claude-sonnet-4-6 ~/.codex/skills/claude-review/scripts/claude_review.rb --intent "Review the current diff"
 ```
 
 Use an explicit one-off session name:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb \
+~/.codex/skills/claude-review/scripts/claude_review.rb \
   --zellij-session feature-review \
   --intent "Review the current diff"
 ```
@@ -118,13 +118,13 @@ Use an explicit one-off session name:
 Inspect the prompt bundle without calling Claude:
 
 ```sh
-~/.codex/skills/claude-fresh-review/scripts/claude_fresh_review.rb --dry-run --intent "Check prompt"
+~/.codex/skills/claude-review/scripts/claude_review.rb --dry-run --intent "Check prompt"
 ```
 
 Run deterministic self-checks:
 
 ```sh
-ruby ~/.codex/skills/claude-fresh-review/scripts/self_check.rb
+ruby ~/.codex/skills/claude-review/scripts/self_check.rb
 ```
 
 ## Security Notes
@@ -135,18 +135,18 @@ The skip-list is a guardrail, not a secrets scanner. Keep real secrets ignored, 
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Fresh Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session when available, and prints commands like:
+The helper creates a new named Zellij session, starts a `Claude Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session when available, and prints commands like:
 
 ```sh
 zellij attach feature-review
 zellij --session feature-review action dump-screen --pane-id terminal_0
-zellij --session feature-review action dump-screen --pane-id terminal_0 --full --path /tmp/claude-fresh-review-feature-review.screen.txt
+zellij --session feature-review action dump-screen --pane-id terminal_0 --full --path /tmp/claude-review-feature-review.screen.txt
 zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
 ```
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under an owner-only `claude-fresh-review` directory in the system temp directory so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. If Ghostty auto-open is unavailable, the Zellij review keeps running and the printed `zellij attach <session>` command is the supported way to watch it. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo. If the done marker is absent, keep polling until about 15 minutes have passed; do not rerun solely because `dump-screen`, `list-panes`, or `list-sessions` reports no active session. Check the done marker and handoff paths directly first. If the session is repeatedly confirmed gone/exited and the marker remains absent after a brief direct recheck, treat the run as failed or ambiguous rather than polling forever. If the marker is non-zero but the handoff exists, inspect the handoff before discarding the review.
+The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under an owner-only `claude-review` directory in the system temp directory so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. If Ghostty auto-open is unavailable, the Zellij review keeps running and the printed `zellij attach <session>` command is the supported way to watch it. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo. If the done marker is absent, keep polling until about 15 minutes have passed; do not rerun solely because `dump-screen`, `list-panes`, or `list-sessions` reports no active session. Check the done marker and handoff paths directly first. If the session is repeatedly confirmed gone/exited and the marker remains absent after a brief direct recheck, treat the run as failed or ambiguous rather than polling forever. If the marker is non-zero but the handoff exists, inspect the handoff before discarding the review.
 
 ## Review posture
 

@@ -6,7 +6,7 @@ require "json"
 require "open3"
 require "tmpdir"
 
-HELPER = File.expand_path("claude_fresh_review.rb", __dir__)
+HELPER = File.expand_path("claude_review.rb", __dir__)
 STREAM_PRINTER = File.expand_path("claude_stream_printer.rb", __dir__)
 
 def run_cmd(repo, *cmd, allow_failure: false)
@@ -25,7 +25,7 @@ def git(repo, *args)
 end
 
 def init_repo
-  repo = Dir.mktmpdir("cfr-check-")
+  repo = Dir.mktmpdir("cr-check-")
   git(repo, "init")
   git(repo, "config", "user.email", "check@example.test")
   git(repo, "config", "user.name", "Self Check")
@@ -65,7 +65,7 @@ def run_stream_printer(handoff_path, session_id_path, *events)
 end
 
 def test_stream_printer_writes_session_id_from_init
-  dir = Dir.mktmpdir("cfr-printer-")
+  dir = Dir.mktmpdir("cr-printer-")
   session_id_path = File.join(dir, "session-id.txt")
 
   _stdout, stderr, status = run_stream_printer(
@@ -81,7 +81,7 @@ ensure
 end
 
 def test_stream_printer_writes_missing_handoff_from_result
-  dir = Dir.mktmpdir("cfr-printer-")
+  dir = Dir.mktmpdir("cr-printer-")
   handoff_path = File.join(dir, "handoff.md")
   result_text = "Final review handoff\n"
 
@@ -100,7 +100,7 @@ ensure
 end
 
 def test_stream_printer_preserves_non_empty_handoff
-  dir = Dir.mktmpdir("cfr-printer-")
+  dir = Dir.mktmpdir("cr-printer-")
   handoff_path = File.join(dir, "handoff.md")
   original_text = "Claude wrote a structured handoff\n"
   File.binwrite(handoff_path, original_text)
@@ -268,7 +268,7 @@ ensure
 end
 
 def test_project_context_includes_parent_and_repo_authority_files
-  parent = Dir.mktmpdir("cfr-context-parent-")
+  parent = Dir.mktmpdir("cr-context-parent-")
   repo = File.join(parent, "child")
   FileUtils.mkdir_p(repo)
 

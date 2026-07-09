@@ -44,7 +44,7 @@ options = {
 }
 
 parser = OptionParser.new do |opts|
-  opts.banner = "Usage: claude_fresh_review.rb [options]"
+  opts.banner = "Usage: claude_review.rb [options]"
 
   opts.on("--base REF", "Review branch changes against REF") { |value| options[:base] = value }
   opts.on("--intent TEXT", "Short description of what changed and why") { |value| options[:intent] = value }
@@ -361,7 +361,7 @@ def default_system_prompt_file(prompt_path)
 end
 
 def private_tmp_root
-  path = File.join(Dir.tmpdir, "claude-fresh-review")
+  path = File.join(Dir.tmpdir, "claude-review")
   FileUtils.mkdir_p(path)
   FileUtils.chmod(0o700, path)
   path
@@ -389,7 +389,7 @@ end
 def zellij_session_name(options)
   return options[:zellij_session] if options[:zellij_session]
 
-  "cfr-#{Time.now.utc.strftime("%H%M%S")}"
+  "cr-#{Time.now.utc.strftime("%H%M%S")}"
 end
 
 def claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path, session_id_path)
@@ -436,10 +436,10 @@ def run_zellij_review(system_prompt, payload, repo_root, options)
   cmd = claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path, session_id_path)
 
   ClaudeVisibleSession.run_session(
-    skill_name: "claude-fresh-review",
+    skill_name: "claude-review",
     session: session,
     repo_root: repo_root,
-    pane_name: "Claude Fresh Review",
+    pane_name: "Claude Review",
     claude_shell_command: cmd,
     prompt_path: prompt_path,
     system_prompt_path: system_prompt_path,
@@ -519,7 +519,7 @@ if diff_body.strip.empty? && untracked.strip.empty? && artifact_text.to_s.strip.
 end
 
 reviewer_persona = <<~PROMPT
-  You are reviewing a git diff or supplied project artifact with fresh eyes after another agent planned or changed it.
+  You are reviewing a git diff or supplied project artifact independently after another agent planned or changed it.
 
   Read the bundled project context before judging the work. Use it to calibrate product fit, stack choice, taste, scope, and what counts as over-engineering for this repo. If project context conflicts with generic best practice, project context wins unless it creates a concrete correctness, security, or data-loss risk.
 

@@ -1,9 +1,9 @@
 ---
-name: claude-fresh-review
+name: claude-review
 description: Manual Claude Code review gate for the current diff, branch, or repo artifact. Launch a visible Zellij review, verify Claude's findings against the repo, and checkpoint before editing.
 ---
 
-# Claude Fresh Review
+# Claude Review
 
 Launch Claude Code as an independent reviewer. Claude is review input, not
 authority: verify every finding against the real repo before acting on it.
@@ -33,11 +33,11 @@ so the user can interrupt.
 From the target repo root, run the helper from this skill directory:
 
 ```sh
-/path/to/claude-fresh-review/scripts/claude_fresh_review.rb \
+/path/to/claude-review/scripts/claude_review.rb \
   --intent "Short description of the change"
 ```
 
-Replace `/path/to/claude-fresh-review` with the loaded skill directory. Do not
+Replace `/path/to/claude-review` with the loaded skill directory. Do not
 run from the skill directory unless reviewing this skill.
 
 Use:

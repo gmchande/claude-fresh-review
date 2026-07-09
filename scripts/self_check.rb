@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "open3"
 require "tmpdir"
+require_relative "claude_visible_session"
 
 HELPER = File.expand_path("claude_review.rb", __dir__)
 STREAM_PRINTER = File.expand_path("claude_stream_printer.rb", __dir__)
@@ -295,6 +296,50 @@ ensure
   FileUtils.rm_rf(parent) if parent
 end
 
+def test_socket_dir_defaults_without_shell_setup
+  previous = ENV.delete("ZELLIJ_SOCKET_DIR")
+  socket_dir = ClaudeVisibleSession.ensure_zellij_socket_dir!("claude-review self-check")
+
+  assert(socket_dir == "/tmp/zellij-#{Process.uid}", "socket dir should use the short stable per-user default")
+  assert(Dir.exist?(socket_dir), "socket dir should be created")
+  socket_command = ClaudeVisibleSession.zellij_shell_command("list-sessions")
+  assert_includes(socket_command, "ZELLIJ_SOCKET_DIR", "socket-aware command")
+  assert_includes(socket_command, socket_dir, "socket-aware command")
+ensure
+  if previous
+    ENV["ZELLIJ_SOCKET_DIR"] = previous
+  else
+    ENV.delete("ZELLIJ_SOCKET_DIR")
+  end
+end
+
+def test_include_repo_bundles_related_diff
+  primary = init_repo
+  related = init_repo
+
+  write(primary, "primary.txt", "before\n")
+  commit_all(primary, "initial primary")
+
+  write(related, "AGENTS.md", "# Related guidance\n\nPreserve historical notes.\n")
+  write(related, "related.txt", "before\n")
+  commit_all(related, "initial related")
+  write(related, "related.txt", "after\n")
+  write(related, "new-note.md", "new related context\n")
+
+  output, status = dry_run(primary, "--include-repo", related, "--intent", "Review both repos")
+
+  assert(status.success?, "include-repo dry-run should succeed")
+  assert_includes(output, "Review target: clean primary working tree with included repositories", "include repo primary")
+  assert_includes(output, "# Related Repositories", "include repo")
+  assert_includes(output, "Repository: #{File.realpath(related)}", "include repo")
+  assert_includes(output, "Preserve historical notes.", "include repo authority")
+  assert_includes(output, "+after", "include repo diff")
+  assert_includes(output, "new related context", "include repo untracked")
+ensure
+  FileUtils.rm_rf(primary) if primary
+  FileUtils.rm_rf(related) if related
+end
+
 tests = [
   method(:test_stream_printer_writes_session_id_from_init),
   method(:test_stream_printer_writes_missing_handoff_from_result),
@@ -308,7 +353,9 @@ tests = [
   method(:test_binary_untracked_skip),
   method(:test_artifact_only),
   method(:test_dirty_artifact_includes_diff),
-  method(:test_project_context_includes_parent_and_repo_authority_files)
+  method(:test_project_context_includes_parent_and_repo_authority_files),
+  method(:test_socket_dir_defaults_without_shell_setup),
+  method(:test_include_repo_bundles_related_diff)
 ]
 
 tests.each do |test|

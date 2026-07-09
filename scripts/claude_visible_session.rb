@@ -3,6 +3,7 @@
 require "fileutils"
 require "open3"
 require "shellwords"
+require "tmpdir"
 
 module ClaudeVisibleSession
   module_function
@@ -133,13 +134,9 @@ module ClaudeVisibleSession
   end
 
   def ensure_zellij_socket_dir!(skill_name)
-    socket_dir = ENV.fetch("ZELLIJ_SOCKET_DIR", "")
-    if socket_dir.empty?
-      warn "ZELLIJ_SOCKET_DIR is required for #{skill_name}'s visible Zellij workflow."
-      warn "Set it once in shell startup, for example: export ZELLIJ_SOCKET_DIR=/tmp/zellij"
-      warn "Then open a new terminal and rerun the helper. This keeps plain `zellij attach <session>` working everywhere."
-      exit 1
-    end
+    socket_dir = ENV.fetch("ZELLIJ_SOCKET_DIR", "").strip
+    socket_dir = "/tmp/zellij-#{Process.uid}" if socket_dir.empty?
+    ENV["ZELLIJ_SOCKET_DIR"] = socket_dir
 
     begin
       FileUtils.mkdir_p(socket_dir)
@@ -147,6 +144,8 @@ module ClaudeVisibleSession
       warn "Could not create ZELLIJ_SOCKET_DIR #{socket_dir.inspect}: #{e.message}"
       exit 1
     end
+
+    socket_dir
   end
 
   def run_command(*cmd, allow_failure: false)
@@ -176,7 +175,7 @@ module ClaudeVisibleSession
   end
 
   def zellij_shell_command(*args)
-    (["zellij"] + args).shelljoin
+    (["env", "ZELLIJ_SOCKET_DIR=#{ENV.fetch("ZELLIJ_SOCKET_DIR")}", "zellij"] + args).shelljoin
   end
 
   def zellij_session_exists?(session)

@@ -1,114 +1,86 @@
 ---
 name: claude-review
-description: Manual Claude Code review gate for the current diff, branch, or repo artifact. Launch a visible Zellij review, verify Claude's findings against the repo, and checkpoint before editing.
+description: Manual Claude Code review gate for a current diff, branch, artifact, or coordinated multi-repo change. Launch one visible Zellij review, verify Claude's findings against every included repo, and checkpoint before editing.
 ---
 
 # Claude Review
 
-Launch Claude Code as an independent reviewer. Claude is review input, not
-authority: verify every finding against the real repo before acting on it.
+Use Claude Code as an independent reviewer. Claude is review input, not authority. Verify every finding against the real files before acting.
 
-## Preflight
+## No-Edit Gate
 
-Confirm the target repo root. Do not run from a parent directory containing
-unrelated repos. Use `--doctor` if the visible review environment is uncertain.
+Before the verification checkpoint, do not edit files, run write-producing formatters or generators, stage, commit, or push. Read-only inspection and non-writing validation are allowed.
 
-The helper auto-loads `AGENTS.md` and `CLAUDE.md` from the repo root and
-ancestor directories, so Claude sees project shape, stack, taste, and parent
-guidance before judging the diff or artifact.
-
-Before the verification checkpoint, do not call `apply_patch`, run
-formatters/generators/autofixers, stage, commit, push, or modify repo files.
-
-Allowed before the checkpoint: `git status`, `git diff`, `rg`, `sed`, `nl`,
-read-only inspection, and validation commands that do not write files. If a
-validation command may write generated files, ask first or defer it.
-
-Exception: if the same user message explicitly says to review and then fix
-accepted findings without stopping, send the checkpoint immediately before edits
-so the user can interrupt.
+If the user explicitly asks to review and then fix accepted findings without stopping, send the checkpoint immediately before editing so they can interrupt.
 
 ## Launch
 
-From the target repo root, run the helper from this skill directory:
+1. Confirm the primary repo root. Run from that root, not a parent containing unrelated repos.
+2. Use one Claude session for one logical change. For a cross-repo change, choose the repo that owns the operating authority as primary and pass each other repo with `--include-repo PATH`. Do not launch parallel per-repo reviews.
+3. Run:
 
 ```sh
 /path/to/claude-review/scripts/claude_review.rb \
   --intent "Short description of the change"
 ```
 
-Replace `/path/to/claude-review` with the loaded skill directory. Do not
-run from the skill directory unless reviewing this skill.
+Cross-repo example:
 
-Use:
+```sh
+/path/to/claude-review/scripts/claude_review.rb \
+  --include-repo /absolute/path/to/related-repo \
+  --intent "Review this coordinated change across both repos"
+```
 
-- `--plan PATH` for spec/PRD context that should judge the diff.
-- `--artifact PATH` to include a document, plan, workflow, or prompt. It is
-  artifact-only when the worktree is clean; otherwise it reviews the artifact
-  alongside the current diff.
-- `--intent "..."` for the product/user goal and any conversation-only nuance.
-- `--base REF` for already-committed branch work.
-- `--dry-run` to inspect the prompt bundle without launching Claude.
+The helper configures a stable per-user Zellij socket automatically and generates collision-safe session names. Use `--doctor` only to check installed dependencies.
 
-Claude does not receive Edit/Write tools, but Bash under `bypassPermissions` is
-not read-only. Use this only in trusted local repos and check `git status` after
-the run. The helper sends eligible untracked text files to Claude, but skips
-untracked paths that look like credentials such as `.env`, `.env.*`, private
-keys, `.npmrc`, `.pypirc`, and non-source names containing `secret`, `token`,
-`credential`, or `password`.
+Useful options:
 
-The helper runs `claude-fable-5` at xhigh effort by default. Override deliberately
-with `CLAUDE_REVIEW_MODEL` or `CLAUDE_REVIEW_EFFORT` only when the review does
-not need the default scrutiny.
+- `--include-repo PATH` includes another repo's authority files, status, diff, and eligible untracked text files; repeat as needed.
+- `--plan PATH` supplies a spec or PRD.
+- `--artifact PATH` adds a document or workflow; it becomes artifact-only when the primary worktree is clean.
+- `--base REF` reviews committed branch work.
+- `--dry-run` prints the prompt bundle without launching Claude.
+
+Claude has read-oriented tools plus Bash under `bypassPermissions`, so use the helper only with trusted local repos. Likely credential files are excluded from untracked-file bundles, but this is not a secrets scanner.
 
 ## Observe
 
-Let the user watch the visible Zellij session. On macOS with Ghostty, the helper
-opens a watching tab automatically. If Ghostty auto-open is unavailable, the
-review still runs and the printed `zellij attach <session>` command is the
-manual watch path. First check the done marker after 2-3 minutes, then poll the
-marker/handoff paths printed by the helper. The marker holds Claude's exit code.
-If the run behaves ambiguously, read
-[references/observing-zellij.md](references/observing-zellij.md).
+Let the user watch the visible Zellij session. First check the printed done marker after 2-3 minutes, then poll the marker and handoff paths. Read [references/observing-zellij.md](references/observing-zellij.md) only if the run is ambiguous.
 
-## Verify Gate
+Leave the session open for follow-ups. Clean it up only when the user says the review is finished.
 
-After Claude responds, verify before editing:
+## Verify and Stop
+
+After Claude responds:
 
 1. Read the handoff.
-2. Inspect the actual diff, status, untracked files, and artifact if supplied.
-3. Classify each Claude finding as accepted, rejected, or deferred.
+2. Re-check status, diffs, untracked files, and supplied artifacts in every included repo.
+3. Classify each finding as accepted, rejected, or deferred.
 4. Send this checkpoint and stop:
 
 ```md
 Claude found:
-- [short list of findings]
+- [short findings]
 
 Codex checked:
-- [one-paragraph summary of what the diff actually changes]
+- [what the actual cross-repo diff changes]
 
 I agree with:
-- [finding]: [why it is real and worth fixing]
+- [finding]: [why it is real]
 
 I reject or defer:
-- [finding]: [why it is noise, speculative, already handled, or not worth fixing now]
+- [finding]: [why it is noise, historical, speculative, or out of scope]
 
 Implementation plan:
-- [smallest concrete edits]
-- [focused checks to run]
+- [smallest edits]
+- [focused checks]
 
 Waiting for your go-ahead before I edit.
 ```
 
-If there are no actionable findings, say so and include any residual risk or
-test gap.
+If nothing is actionable, say so and name any residual risk or test gap.
 
 ## After Approval
 
-- Fix only accepted, concrete, in-scope issues.
-- Keep edits narrow and consistent with the repo.
-- Re-run focused checks.
-- Summarize changed files and validation.
-- If fixes materially change the diff, one follow-up Claude review is reasonable; avoid review loops.
-
-Leave the Zellij session open after the verify gate; the user often has follow-up prompts, and the printed `claude --resume` command reaches the same Claude session from the repo root even after cleanup. Delete the session with the printed cleanup command only when the user says they are done.
+Fix only accepted in-scope findings, rerun focused checks, and summarize the result. Use one follow-up Claude review only when the fixes materially change the diff.

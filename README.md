@@ -15,6 +15,7 @@ The core runner uses Ruby, Git, zsh, Zellij, and the Claude Code CLI. On macOS w
 - Accepts plan or PRD context with `--plan`.
 - Reviews repo artifacts with `--artifact`; artifact-only when the worktree is clean.
 - Accepts conversation-level intent with `--intent`.
+- Includes coordinated changes from other Git repos in the same review with repeatable `--include-repo PATH` options.
 - Checks local dependencies with `--doctor`.
 - Runs Claude Code in a new, one-off visible Zellij session with `claude-fable-5`, xhigh effort, and `--permission-mode bypassPermissions` by default, with streamed output formatted for the terminal.
 - Allows `Read`, `Grep`, `Glob`, `Bash`, `WebSearch`, and `WebFetch`.
@@ -44,16 +45,10 @@ chmod +x "${CODEX_HOME:-$HOME/.codex}/skills/claude-review/scripts/claude_review
 - zsh on `PATH`
 - Claude Code CLI on `PATH`; tested with Claude Code 2.1.193
 - Zellij 0.44+ on `PATH`
-- `ZELLIJ_SOCKET_DIR` set in shell startup to a short stable path such as `/tmp/zellij`
 - Optional: Ghostty.app installed and registered with macOS for automatic watch-tab opening
 - Optional: GitHub CLI, used only to infer the PR base branch when available
 
-Set the Zellij socket path once in your shell startup:
-
-```sh
-export ZELLIJ_SOCKET_DIR=/tmp/zellij
-mkdir -p "$ZELLIJ_SOCKET_DIR"
-```
+The helper uses `ZELLIJ_SOCKET_DIR` when already set. Otherwise it automatically uses a stable per-user path under the system temporary directory, such as `/tmp/zellij-501`.
 
 ## Usage
 
@@ -75,6 +70,14 @@ Include plan context when available:
 
 ```sh
 ~/.codex/skills/claude-review/scripts/claude_review.rb --plan docs/plan.md
+```
+
+Review one coordinated change across multiple repos in a single session:
+
+```sh
+~/.codex/skills/claude-review/scripts/claude_review.rb \
+  --include-repo ~/Obsidian/gaurav-os \
+  --intent "Review the Alfred and vault cutover together"
 ```
 
 Review a standalone repo artifact when the worktree is clean:
@@ -135,18 +138,16 @@ The skip-list is a guardrail, not a secrets scanner. Keep real secrets ignored, 
 
 ## Runtime Behavior
 
-The helper creates a new named Zellij session, starts a `Claude Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session when available, and prints commands like:
+The helper creates a collision-safe named Zellij session, starts a `Claude Review` pane in the repo root with `claude -p < prompt_bundle`, streams Claude's JSON events through a readable terminal formatter, opens a Ghostty tab attached to the session when available, and prints socket-aware commands like:
 
 ```sh
-zellij attach feature-review
-zellij --session feature-review action dump-screen --pane-id terminal_0
-zellij --session feature-review action dump-screen --pane-id terminal_0 --full --path /tmp/claude-review-feature-review.screen.txt
-zellij --session feature-review action send-keys --pane-id terminal_0 "Ctrl c"
+env ZELLIJ_SOCKET_DIR=/tmp/zellij-501 zellij attach feature-review
+env ZELLIJ_SOCKET_DIR=/tmp/zellij-501 zellij --session feature-review action dump-screen --pane-id terminal_0
 ```
 
 If the requested Zellij session name already exists, the helper exits. Session names are one-off handles for a single Claude review; use a fresh name for each run, or remove the old handle with `zellij delete-session <name>` or `zellij kill-session <name>` if it is still active.
 
-The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under an owner-only `claude-review` directory in the system temp directory so the exact task and final review remain inspectable. Zellij must use a short, stable socket namespace such as `/tmp/zellij` in shell startup so plain commands like `zellij attach feature-review` work from new terminal tabs. If `ZELLIJ_SOCKET_DIR` is missing, the helper exits instead of creating a hidden alternate namespace. If Ghostty auto-open is unavailable, the Zellij review keeps running and the printed `zellij attach <session>` command is the supported way to watch it. It does not parse a final review from JSON stdout; Codex should let the user watch the formatted stream, do the first done-marker check after 2-3 minutes, read the handoff once the marker exists, avoid continuous pane polling, and verify every finding against the actual repo. If the done marker is absent, keep polling until about 15 minutes have passed; do not rerun solely because `dump-screen`, `list-panes`, or `list-sessions` reports no active session. Check the done marker and handoff paths directly first. If the session is repeatedly confirmed gone/exited and the marker remains absent after a brief direct recheck, treat the run as failed or ambiguous rather than polling forever. If the marker is non-zero but the handoff exists, inspect the handoff before discarding the review.
+The helper writes the assembled prompt bundle, system prompt, handoff file, and done marker under an owner-only `claude-review` directory in the system temp directory so the exact task and final review remain inspectable. It uses an existing `ZELLIJ_SOCKET_DIR` or configures a stable per-user default, and every printed watch or cleanup command carries that socket path explicitly. If Ghostty auto-open is unavailable, the review keeps running and the printed attach command is the supported watch path. Codex should first check the done marker after 2-3 minutes, read the handoff once complete, and verify every finding against every included repo.
 
 ## Review posture
 

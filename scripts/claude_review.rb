@@ -38,6 +38,7 @@ options = {
   intent: nil,
   plan: nil,
   artifact: nil,
+  include_repos: [],
   doctor: false,
   dry_run: false,
   zellij_session: nil
@@ -50,6 +51,7 @@ parser = OptionParser.new do |opts|
   opts.on("--intent TEXT", "Short description of what changed and why") { |value| options[:intent] = value }
   opts.on("--plan PATH", "Include a plan/PRD file as review context") { |value| options[:plan] = value }
   opts.on("--artifact PATH", "Include a repo artifact; artifact-only when the worktree is clean") { |value| options[:artifact] = value }
+  opts.on("--include-repo PATH", "Include another Git repo in the same review; repeatable") { |value| options[:include_repos] << File.expand_path(value) }
   opts.on("--doctor", "Check local review dependencies and exit") { options[:doctor] = true }
   opts.on("--zellij-session NAME", "Create this one-off visible Zellij session name") { |value| options[:zellij_session] = value }
   opts.on("--dry-run", "Print the prompt bundle instead of calling Claude") { options[:dry_run] = true }
@@ -78,6 +80,13 @@ def git(*args, allow_failure: false)
   stdout
 end
 
+def git_in(repo_root, *args, allow_failure: false)
+  stdout, _stderr, status = run("git", "-C", repo_root, *args, allow_failure: allow_failure)
+  return nil if allow_failure && !status.success?
+
+  stdout
+end
+
 def command_available?(name)
   _stdout, _stderr, status = run("sh", "-c", "command -v #{Shellwords.escape(name)} >/dev/null 2>&1", allow_failure: true)
   status.success?
@@ -85,6 +94,11 @@ end
 
 def git_ref_exists?(ref)
   _stdout, _stderr, status = run("git", "rev-parse", "--verify", "--quiet", ref, allow_failure: true)
+  status.success?
+end
+
+def git_ref_exists_in?(repo_root, ref)
+  _stdout, _stderr, status = run("git", "-C", repo_root, "rev-parse", "--verify", "--quiet", ref, allow_failure: true)
   status.success?
 end
 
@@ -99,6 +113,10 @@ end
 
 def empty_tree_ref
   git("hash-object", "-t", "tree", "/dev/null").strip
+end
+
+def empty_tree_ref_in(repo_root)
+  git_in(repo_root, "hash-object", "-t", "tree", "/dev/null").strip
 end
 
 def likely_text_file?(path)
@@ -229,7 +247,8 @@ def doctor!
   required_checks << ["zsh", command_available?("zsh")]
   required_checks << ["claude", command_available?("claude")]
   required_checks << ["zellij", command_available?("zellij")]
-  required_checks << ["ZELLIJ_SOCKET_DIR", !ENV.fetch("ZELLIJ_SOCKET_DIR", "").empty?]
+  socket_dir = ClaudeVisibleSession.ensure_zellij_socket_dir!("claude-review")
+  required_checks << ["Zellij socket directory #{socket_dir}", Dir.exist?(socket_dir)]
 
   optional_checks = []
   optional_checks << ["osascript auto-open support", command_available?("osascript")]
@@ -270,15 +289,17 @@ def secret_like_untracked_path?(path)
   (name_tokens & SECRET_NAME_TOKENS).any?
 end
 
-def untracked_file_section(path)
+def untracked_file_section(path, repo_root = Dir.pwd)
+  full_path = File.join(repo_root, path)
+
   if secret_like_untracked_path?(path)
     "### #{path}\n\nSkipped: likely secret or credential filename.\n"
-  elsif !likely_text_file?(path)
+  elsif !likely_text_file?(full_path)
     "### #{path}\n\nSkipped: not a readable text file.\n"
-  elsif File.size(path) > MAX_UNTRACKED_BYTES
+  elsif File.size(full_path) > MAX_UNTRACKED_BYTES
     "### #{path}\n\nSkipped: file is larger than #{MAX_UNTRACKED_BYTES} bytes.\n"
   else
-    content = File.read(path)
+    content = File.read(full_path)
     "### #{path}\n\n```text\n#{content}\n```\n"
   end
 rescue Errno::ENOENT, Errno::EACCES
@@ -315,8 +336,8 @@ def truncate_text(text, max_bytes, label)
   ["#{truncated}\n\n... #{label} truncated at #{max_bytes} bytes ...", true]
 end
 
-def untracked_bundle
-  raw = git("ls-files", "--others", "--exclude-standard", "-z")
+def untracked_bundle(repo_root = Dir.pwd)
+  raw = git_in(repo_root, "ls-files", "--others", "--exclude-standard", "-z")
   paths = raw.split("\0").reject(&:empty?)
   return "" if paths.empty?
 
@@ -324,7 +345,7 @@ def untracked_bundle
   total_bytes = 0
 
   paths.each do |path|
-    section = untracked_file_section(path)
+    section = untracked_file_section(path, repo_root)
     section_bytes = section.bytesize
     if total_bytes + section_bytes > MAX_UNTRACKED_BUNDLE_BYTES
       sections << "### #{path}\n\nSkipped: untracked bundle exceeded #{MAX_UNTRACKED_BUNDLE_BYTES} bytes.\n"
@@ -341,6 +362,86 @@ def untracked_bundle
     These files are not in `git diff`, but are part of the current working tree:
 
     #{sections.join("\n")}
+  TEXT
+end
+
+def normalize_repo_root(path)
+  unless Dir.exist?(path)
+    warn "Included repo path not found: #{path}"
+    exit 1
+  end
+
+  stdout, stderr, status = run("git", "-C", path, "rev-parse", "--show-toplevel", allow_failure: true)
+  unless status.success?
+    warn "Included path is not inside a Git repository: #{path}"
+    warn stderr unless stderr.empty?
+    exit 1
+  end
+
+  stdout.strip
+end
+
+def included_repo_section(repo_root)
+  status_short = git_in(repo_root, "status", "--short")
+  dirty = !status_short.strip.empty?
+  project_context, project_context_truncated = project_context_bundle(repo_root)
+
+  if dirty
+    comparison_ref = git_ref_exists_in?(repo_root, "HEAD") ? "HEAD" : empty_tree_ref_in(repo_root)
+    target_label = comparison_ref == "HEAD" ? "working tree against HEAD" : "working tree against empty tree"
+    diff_stat = git_in(repo_root, "diff", "--stat", comparison_ref, "--")
+    diff_body = git_in(repo_root, "diff", "--no-ext-diff", comparison_ref, "--")
+    untracked = untracked_bundle(repo_root)
+  else
+    target_label = "clean working tree"
+    diff_stat = "(clean; included for cross-repo context)"
+    diff_body = ""
+    untracked = ""
+  end
+
+  diff_body, diff_truncated = truncate_text(diff_body, MAX_DIFF_BYTES, "included repo diff")
+
+  <<~TEXT
+    ## Included Repository
+
+    Repository: #{repo_root}
+    Review target: #{target_label}
+
+    #{project_context}
+    #{project_context_truncated.empty? ? "" : "Project context was truncated for: #{project_context_truncated.join(", ")}. Inspect the real repo before relying on missing context."}
+    Git status:
+    ```text
+    #{status_short.empty? ? "(clean)" : status_short}
+    ```
+
+    Diff stat:
+    ```text
+    #{diff_stat}
+    ```
+
+    Diff:
+    ```diff
+    #{diff_body}
+    ```
+
+    #{diff_truncated ? "Diff was truncated at #{MAX_DIFF_BYTES} bytes; inspect the real repo before relying on missing context." : ""}
+
+    #{untracked}
+  TEXT
+end
+
+def included_repo_bundle(paths, primary_repo_root)
+  repo_roots = paths.map { |path| normalize_repo_root(path) }.uniq
+  primary_realpath = File.realpath(primary_repo_root)
+  repo_roots.reject! { |path| File.realpath(path) == primary_realpath }
+  return "" if repo_roots.empty?
+
+  <<~TEXT
+    # Related Repositories
+
+    Treat these repositories as part of the same change. Review their bundled authority, status, diffs, and untracked files together with the primary repository. Use `git -C` or direct reads when more context is needed. Do not edit any repository.
+
+    #{repo_roots.map { |repo_root| included_repo_section(repo_root) }.join("\n")}
   TEXT
 end
 
@@ -389,7 +490,7 @@ end
 def zellij_session_name(options)
   return options[:zellij_session] if options[:zellij_session]
 
-  "cr-#{Time.now.utc.strftime("%H%M%S")}"
+  "cr-#{Time.now.utc.strftime("%H%M%S-%6N")}-#{Process.pid}"
 end
 
 def claude_print_shell_cmd(system_prompt_path, prompt_path, handoff_path, done_marker_path, session_id_path)
@@ -464,6 +565,7 @@ Dir.chdir(repo_root)
 plan_text = read_plan(options[:plan])
 artifact_text, artifact_truncated = read_artifact(options[:artifact])
 project_context, project_context_truncated = project_context_bundle(repo_root)
+included_repos = included_repo_bundle(options[:include_repos], repo_root)
 status_short = git("status", "--short")
 dirty = !status_short.strip.empty?
 
@@ -496,6 +598,11 @@ elsif options[:artifact] && !options[:base]
   diff_stat = "(artifact-only review; no git diff requested)"
   diff_body = ""
   untracked = ""
+elsif options[:include_repos].any? && !options[:base]
+  target_label = "clean primary working tree with included repositories"
+  diff_stat = "(clean primary repo; related repo changes are bundled below)"
+  diff_body = ""
+  untracked = ""
 else
   base = options[:base] || current_branch_base
   unless base
@@ -511,7 +618,7 @@ end
 
 diff_body, diff_truncated = truncate_text(diff_body, MAX_DIFF_BYTES, "diff")
 
-if diff_body.strip.empty? && untracked.strip.empty? && artifact_text.to_s.strip.empty?
+if diff_body.strip.empty? && untracked.strip.empty? && artifact_text.to_s.strip.empty? && included_repos.strip.empty?
   warn "No diff content found to review."
   warn "If reviewing a standalone document or plan, pass --artifact PATH."
   warn "If reviewing already-committed work, pass --base HEAD~1 or --base HEAD~N." unless dirty
@@ -575,6 +682,8 @@ payload = <<~PROMPT
   #{diff_truncated ? "Diff was truncated at #{MAX_DIFF_BYTES} bytes; inspect the real repo before relying on missing context." : ""}
 
   #{untracked}
+
+  #{included_repos}
 PROMPT
 
 if options[:dry_run]

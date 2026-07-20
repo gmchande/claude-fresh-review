@@ -5,10 +5,10 @@ require "fileutils"
 require "json"
 require "open3"
 require "tmpdir"
-require_relative "claude_visible_session"
+require_relative "pi_visible_session"
 
 HELPER = File.expand_path("claude_review.rb", __dir__)
-STREAM_PRINTER = File.expand_path("claude_stream_printer.rb", __dir__)
+HANDOFF_EXTENSION = File.expand_path("pi_review_handoff.ts", __dir__)
 
 def run_cmd(repo, *cmd, allow_failure: false)
   stdout, stderr, status = Open3.capture3(*cmd, chdir: repo)
@@ -60,80 +60,159 @@ def assert_includes(text, needle, label)
   assert(text.include?(needle), "#{label}: expected output to include #{needle.inspect}")
 end
 
-def run_stream_printer(handoff_path, session_id_path, *events)
-  input = events.map(&:to_json).join("\n") + "\n"
-  Open3.capture3("ruby", STREAM_PRINTER, handoff_path, session_id_path, stdin_data: input)
-end
-
-def test_stream_printer_writes_session_id_from_init
-  dir = Dir.mktmpdir("cr-printer-")
-  session_id_path = File.join(dir, "session-id.txt")
-
-  _stdout, stderr, status = run_stream_printer(
-    File.join(dir, "handoff.md"),
-    session_id_path,
-    { "type" => "system", "subtype" => "init", "session_id" => "abc-123", "model" => "m", "cwd" => dir }
-  )
-
-  assert(status.success?, "stream printer should exit successfully: #{stderr}")
-  assert(File.binread(session_id_path) == "abc-123", "stream printer should write the session id")
-ensure
-  FileUtils.rm_rf(dir) if dir
-end
-
-def test_stream_printer_writes_missing_handoff_from_result
-  dir = Dir.mktmpdir("cr-printer-")
+def test_pi_handoff_extension_tracks_interactive_turns
+  dir = Dir.mktmpdir("cr-pi-handoff-")
   handoff_path = File.join(dir, "handoff.md")
-  result_text = "Final review handoff\n"
+  done_marker_path = File.join(dir, "review.done")
+  script = <<~JAVASCRIPT
+    import { existsSync, readFileSync, statSync } from "node:fs";
 
-  _stdout, stderr, status = run_stream_printer(
-    handoff_path,
-    File.join(dir, "session-id.txt"),
-    { "type" => "result", "subtype" => "success", "result" => result_text }
-  )
+    process.env.PI_REVIEW_HANDOFF_PATH = #{JSON.generate(handoff_path)};
+    process.env.PI_REVIEW_DONE_MARKER_PATH = #{JSON.generate(done_marker_path)};
 
-  assert(status.success?, "stream printer should exit successfully: #{stderr}")
-  assert(File.file?(handoff_path), "stream printer should create handoff")
-  assert(File.binread(handoff_path) == result_text, "stream printer should write result text")
-  assert((File.stat(handoff_path).mode & 0o777) == 0o600, "stream printer handoff should be mode 0600")
+    const extensionModule = await import(`file://#{HANDOFF_EXTENSION}?self_check=${Date.now()}`);
+    const handlers = {};
+    const pi = { on(name, handler) { handlers[name] = handler; } };
+    const assistant = (text, stopReason = "stop") => ({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "private" }, { type: "text", text }],
+      stopReason,
+    });
+
+    extensionModule.default(pi);
+
+    const settle = async (message) => {
+      await handlers.agent_start({});
+      const cleared = !existsSync(process.env.PI_REVIEW_HANDOFF_PATH) && !existsSync(process.env.PI_REVIEW_DONE_MARKER_PATH);
+      await handlers.agent_end({ messages: message ? [message] : [] });
+      await handlers.agent_settled({});
+      return {
+        cleared,
+        handoff: readFileSync(process.env.PI_REVIEW_HANDOFF_PATH, "utf8"),
+        marker: readFileSync(process.env.PI_REVIEW_DONE_MARKER_PATH, "utf8"),
+      };
+    };
+
+    const first = await settle(assistant("First review"));
+    first.handoffMode = statSync(process.env.PI_REVIEW_HANDOFF_PATH).mode & 0o777;
+    first.markerMode = statSync(process.env.PI_REVIEW_DONE_MARKER_PATH).mode & 0o777;
+    const interrupted = await settle(assistant("Partial review", "aborted"));
+    const truncated = await settle(assistant("Cut off review", "length"));
+    const failed = await settle({ ...assistant("Partial provider output", "error"), errorMessage: "quota exceeded" });
+    const final = await settle(assistant("Corrected final review"));
+
+    console.log(JSON.stringify({ first, interrupted, truncated, failed, final }));
+  JAVASCRIPT
+
+  stdout, stderr, status = Open3.capture3("bun", "-e", script)
+  assert(status.success?, "Pi handoff extension should load and run under Bun: #{stderr}")
+  result = JSON.parse(stdout)
+  assert(result.dig("first", "handoff") == "First review\n", "handoff should contain the completed assistant turn")
+  assert(result.dig("first", "marker") == "0\n", "completed turn should write status 0")
+  assert(result.dig("first", "handoffMode") == 0o600, "handoff should be mode 0600")
+  assert(result.dig("first", "markerMode") == 0o600, "done marker should be mode 0600")
+  assert(result.dig("interrupted", "cleared"), "a new turn should clear the previous handoff and marker")
+  assert(result.dig("interrupted", "marker") == "130\n", "Escape-style abort should write status 130")
+  assert(result.dig("truncated", "cleared"), "a follow-up should clear the interrupted marker")
+  assert(result.dig("truncated", "marker") == "1\n", "token-limit truncation should not look complete")
+  assert_includes(result.dig("truncated", "handoff"), "stop reason length", "truncated handoff")
+  assert(result.dig("failed", "marker") == "1\n", "provider error should write status 1")
+  assert(result.dig("failed", "handoff").start_with?("quota exceeded"), "provider error should lead the failed handoff")
+  assert(result.dig("final", "handoff") == "Corrected final review\n", "follow-up should replace the handoff")
+  assert(result.dig("final", "marker") == "0\n", "completed follow-up should replace status 130 with 0")
 ensure
   FileUtils.rm_rf(dir) if dir
 end
 
-def test_stream_printer_preserves_non_empty_handoff
-  dir = Dir.mktmpdir("cr-printer-")
-  handoff_path = File.join(dir, "handoff.md")
-  original_text = "Claude wrote a structured handoff\n"
-  File.binwrite(handoff_path, original_text)
+def test_review_scenarios
+  clean_branch = lambda do |repo|
+    write(repo, "app.txt", "base\n")
+    commit_all(repo, "initial")
+    git(repo, "branch", "-M", "main")
+    git(repo, "checkout", "-b", "feature")
+    write(repo, "app.txt", "feature\n")
+    commit_all(repo, "feature")
+  end
 
-  _stdout, stderr, status = run_stream_printer(
-    handoff_path,
-    File.join(dir, "session-id.txt"),
-    { "type" => "result", "subtype" => "success", "result" => "Fallback handoff\n" }
-  )
+  scenarios = [
+    {
+      name: "dirty diff",
+      setup: ->(repo) { write(repo, "app.txt", "hello\n"); commit_all(repo, "initial"); write(repo, "app.txt", "hello world\n") },
+      args: ["--intent", "Review dirty diff"],
+      includes: ["Review target: working tree against HEAD", "+hello world"]
+    },
+    {
+      name: "clean branch with base",
+      setup: clean_branch,
+      args: ["--base", "main", "--intent", "Review branch"],
+      includes: ["Review target: current branch against main", "+feature"]
+    },
+    {
+      name: "clean branch requires base",
+      setup: clean_branch,
+      args: ["--intent", "Review branch"],
+      success: false,
+      includes: ["No local changes found. Pass --base REF"]
+    },
+    {
+      name: "unborn untracked",
+      setup: ->(repo) { write(repo, "notes.txt", "first file\n") },
+      args: ["--intent", "Review unborn repo"],
+      includes: ["working tree against empty tree", "## Untracked Files", "first file"]
+    },
+    {
+      name: "missing plan",
+      setup: ->(repo) { write(repo, "app.txt", "hello\n"); commit_all(repo, "initial") },
+      args: ["--plan", "missing.md"],
+      success: false,
+      includes: ["Plan file not found: missing.md"]
+    },
+    {
+      name: "plan only",
+      setup: ->(repo) { write(repo, "docs/plan.md", "# Plan\n\nShip the bounded review.\n"); commit_all(repo, "initial") },
+      args: ["--plan", "docs/plan.md"],
+      includes: ["Review target: plan docs/plan.md", "Plan under review: docs/plan.md", "Ship the bounded review."]
+    },
+    {
+      name: "binary untracked",
+      setup: ->(repo) { write(repo, "app.txt", "hello\n"); commit_all(repo, "initial"); write(repo, "blob.bin", "abc\u0000def") },
+      args: ["--intent", "Review binary untracked"],
+      includes: ["### blob.bin", "Skipped: not a readable text file."]
+    },
+    {
+      name: "artifact only",
+      setup: ->(repo) { write(repo, "docs/plan.md", "# Plan\n\nShip the workflow.\n"); commit_all(repo, "initial") },
+      args: ["--artifact", "docs/plan.md"],
+      includes: ["Review target: artifact docs/plan.md", "Artifact under review: docs/plan.md", "Ship the workflow."]
+    },
+    {
+      name: "dirty artifact",
+      setup: lambda do |repo|
+        write(repo, "app.txt", "hello\n")
+        write(repo, "docs/plan.md", "# Plan\n\nShip the workflow.\n")
+        commit_all(repo, "initial")
+        write(repo, "app.txt", "hello changed\n")
+      end,
+      args: ["--artifact", "docs/plan.md"],
+      includes: ["Review target: working tree against HEAD", "Artifact under review: docs/plan.md", "+hello changed"]
+    }
+  ]
 
-  assert(status.success?, "stream printer should exit successfully: #{stderr}")
-  assert(File.binread(handoff_path) == original_text, "stream printer should not overwrite non-empty handoff")
-ensure
-  FileUtils.rm_rf(dir) if dir
+  scenarios.each do |scenario|
+    repo = init_repo
+    begin
+      scenario[:setup].call(repo)
+      output, status = dry_run(repo, *scenario[:args], allow_failure: !scenario.fetch(:success, true))
+      expected_success = scenario.fetch(:success, true)
+      assert(status.success? == expected_success, "#{scenario[:name]} dry-run success should be #{expected_success}")
+      scenario[:includes].each { |needle| assert_includes(output, needle, scenario[:name]) }
+    ensure
+      FileUtils.rm_rf(repo)
+    end
+  end
 end
 
-def test_dirty_diff
-  repo = init_repo
-  write(repo, "app.txt", "hello\n")
-  commit_all(repo, "initial")
-  write(repo, "app.txt", "hello world\n")
-
-  output, status = dry_run(repo, "--intent", "Review dirty diff")
-
-  assert(status.success?, "dirty diff dry-run should succeed")
-  assert_includes(output, "Review target: working tree against HEAD", "dirty diff")
-  assert_includes(output, "+hello world", "dirty diff")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_default_model_and_effort
+def test_default_pi_configuration
   repo = init_repo
   write(repo, "app.txt", "hello\n")
   commit_all(repo, "initial")
@@ -141,41 +220,16 @@ def test_default_model_and_effort
 
   output, status = dry_run(repo, "--intent", "Review defaults")
 
-  assert(status.success?, "default model dry-run should succeed")
-  assert_includes(output, "Claude model: claude-fable-5", "default model")
-  assert_includes(output, "Claude effort: xhigh", "default effort")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_clean_branch_with_base
-  repo = init_repo
-  write(repo, "app.txt", "base\n")
-  commit_all(repo, "initial")
-  git(repo, "branch", "-M", "main")
-  git(repo, "checkout", "-b", "feature")
-  write(repo, "app.txt", "feature\n")
-  commit_all(repo, "feature")
-
-  output, status = dry_run(repo, "--base", "main", "--intent", "Review branch")
-
-  assert(status.success?, "clean branch dry-run should succeed")
-  assert_includes(output, "Review target: current branch against main", "clean branch")
-  assert_includes(output, "+feature", "clean branch")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_unborn_untracked
-  repo = init_repo
-  write(repo, "notes.txt", "first file\n")
-
-  output, status = dry_run(repo, "--intent", "Review unborn repo")
-
-  assert(status.success?, "unborn untracked dry-run should succeed")
-  assert_includes(output, "working tree against empty tree", "unborn untracked")
-  assert_includes(output, "## Untracked Files", "unborn untracked")
-  assert_includes(output, "first file", "unborn untracked")
+  assert(status.success?, "default Pi configuration dry-run should succeed")
+  assert_includes(output, "Pi provider: moonshotai", "default provider")
+  assert_includes(output, "Pi model: kimi-k3", "default model")
+  assert_includes(output, "Pi thinking: max", "default thinking level")
+  assert_includes(output, "Runner: interactive Pi TUI in a visible Zellij session", "interactive runner")
+  assert_includes(output, "Pi tools: read,grep,find,ls", "review tool boundary")
+  assert_includes(output, "Match review depth to the change's size, risk, and project context.", "proportional review prompt")
+  assert_includes(output, "Use tools when needed to understand affected behavior", "review exploration prompt")
+  assert_includes(output, "state the review limitation instead of claiming no actionable findings", "incomplete review prompt")
+  assert(!output.match?(/at most \d+ tool calls/i), "review prompt should not contain a numeric tool-call budget")
 ensure
   FileUtils.rm_rf(repo) if repo
 end
@@ -204,66 +258,6 @@ def test_secret_untracked_skip
   assert_includes(output, "TOKENS_SOURCE = true", "secret untracked")
   assert_includes(output, "### password_input.tsx", "secret untracked")
   assert_includes(output, "PasswordInput", "secret untracked")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_missing_plan
-  repo = init_repo
-  write(repo, "app.txt", "hello\n")
-  commit_all(repo, "initial")
-
-  output, status = dry_run(repo, "--plan", "missing.md", allow_failure: true)
-
-  assert(!status.success?, "missing plan dry-run should fail")
-  assert_includes(output, "Plan file not found: missing.md", "missing plan")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_binary_untracked_skip
-  repo = init_repo
-  write(repo, "app.txt", "hello\n")
-  commit_all(repo, "initial")
-  write(repo, "blob.bin", "abc\u0000def")
-
-  output, status = dry_run(repo, "--intent", "Review binary untracked")
-
-  assert(status.success?, "binary untracked dry-run should succeed")
-  assert_includes(output, "### blob.bin", "binary untracked")
-  assert_includes(output, "Skipped: not a readable text file.", "binary untracked")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_artifact_only
-  repo = init_repo
-  write(repo, "docs/plan.md", "# Plan\n\nShip the workflow.\n")
-  commit_all(repo, "initial")
-
-  output, status = dry_run(repo, "--artifact", "docs/plan.md")
-
-  assert(status.success?, "artifact-only dry-run should succeed")
-  assert_includes(output, "Review target: artifact docs/plan.md", "artifact-only")
-  assert_includes(output, "Artifact under review: docs/plan.md", "artifact-only")
-  assert_includes(output, "Ship the workflow.", "artifact-only")
-ensure
-  FileUtils.rm_rf(repo) if repo
-end
-
-def test_dirty_artifact_includes_diff
-  repo = init_repo
-  write(repo, "app.txt", "hello\n")
-  write(repo, "docs/plan.md", "# Plan\n\nShip the workflow.\n")
-  commit_all(repo, "initial")
-  write(repo, "app.txt", "hello changed\n")
-
-  output, status = dry_run(repo, "--artifact", "docs/plan.md")
-
-  assert(status.success?, "dirty artifact dry-run should succeed")
-  assert_includes(output, "Review target: working tree against HEAD", "dirty artifact")
-  assert_includes(output, "Artifact under review: docs/plan.md", "dirty artifact")
-  assert_includes(output, "+hello changed", "dirty artifact")
 ensure
   FileUtils.rm_rf(repo) if repo
 end
@@ -298,11 +292,11 @@ end
 
 def test_socket_dir_defaults_without_shell_setup
   previous = ENV.delete("ZELLIJ_SOCKET_DIR")
-  socket_dir = ClaudeVisibleSession.ensure_zellij_socket_dir!("claude-review self-check")
+  socket_dir = PiVisibleSession.ensure_zellij_socket_dir!
 
   assert(socket_dir == "/tmp/zellij-#{Process.uid}", "socket dir should use the short stable per-user default")
   assert(Dir.exist?(socket_dir), "socket dir should be created")
-  socket_command = ClaudeVisibleSession.zellij_shell_command("list-sessions")
+  socket_command = PiVisibleSession.zellij_shell_command("list-sessions")
   assert_includes(socket_command, "ZELLIJ_SOCKET_DIR", "socket-aware command")
   assert_includes(socket_command, socket_dir, "socket-aware command")
 ensure
@@ -335,24 +329,21 @@ def test_include_repo_bundles_related_diff
   assert_includes(output, "Preserve historical notes.", "include repo authority")
   assert_includes(output, "+after", "include repo diff")
   assert_includes(output, "new related context", "include repo untracked")
+
+  commit_all(related, "related changes")
+  clean_output, clean_status = dry_run(primary, "--include-repo", related, "--intent", "Review both repos", allow_failure: true)
+  assert(!clean_status.success?, "all-clean included repos should not create an empty review")
+  assert_includes(clean_output, "No diff content found to review.", "all-clean include repo")
 ensure
   FileUtils.rm_rf(primary) if primary
   FileUtils.rm_rf(related) if related
 end
 
 tests = [
-  method(:test_stream_printer_writes_session_id_from_init),
-  method(:test_stream_printer_writes_missing_handoff_from_result),
-  method(:test_stream_printer_preserves_non_empty_handoff),
-  method(:test_dirty_diff),
-  method(:test_default_model_and_effort),
-  method(:test_clean_branch_with_base),
-  method(:test_unborn_untracked),
+  method(:test_pi_handoff_extension_tracks_interactive_turns),
+  method(:test_review_scenarios),
+  method(:test_default_pi_configuration),
   method(:test_secret_untracked_skip),
-  method(:test_missing_plan),
-  method(:test_binary_untracked_skip),
-  method(:test_artifact_only),
-  method(:test_dirty_artifact_includes_diff),
   method(:test_project_context_includes_parent_and_repo_authority_files),
   method(:test_socket_dir_defaults_without_shell_setup),
   method(:test_include_repo_bundles_related_diff)

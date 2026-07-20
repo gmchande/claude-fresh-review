@@ -1,76 +1,68 @@
 ---
 name: claude-review
-description: Manual Claude Code review gate for a current diff, branch, artifact, or coordinated multi-repo change. Launch one visible Zellij review, verify Claude's findings against every included repo, and checkpoint before editing.
+description: Single-session Pi/Kimi K3 review gate for a current diff, branch, plan, artifact, or coordinated multi-repo change. Launch one visible review, let the user steer it, independently judge Kimi's findings against the real files, and stop for approval before editing.
 ---
 
 # Claude Review
 
-Use Claude Code as an independent reviewer. Claude is review input, not authority. Verify every finding against the real files before acting.
+Run one independent Kimi K3 review in the Pi harness. Treat its findings as input, not authority. Keep the `$claude-review` name for compatibility until it is renamed separately.
 
-## No-Edit Gate
+## Gate
 
-Before the verification checkpoint, do not edit files, run write-producing formatters or generators, stage, commit, or push. Read-only inspection and non-writing validation are allowed.
-
-If the user explicitly asks to review and then fix accepted findings without stopping, send the checkpoint immediately before editing so they can interrupt.
+Do not edit, format, generate, stage, commit, or push before the verification checkpoint. Always stop for approval after the checkpoint, even when the user also requested fixes.
 
 ## Launch
 
-1. Confirm the primary repo root. Run from that root, not a parent containing unrelated repos.
-2. Use one Claude session for one logical change. For a cross-repo change, choose the repo that owns the operating authority as primary and pass each other repo with `--include-repo PATH`. Do not launch parallel per-repo reviews.
-3. Run:
+1. Run from the primary repo root.
+2. If this task already has a printed Pi session, keep using it. Never launch another review or retry a failed run without the user's explicit approval.
+3. Launch one review:
 
 ```sh
 /path/to/claude-review/scripts/claude_review.rb \
   --intent "Short description of the change"
 ```
 
-Cross-repo example:
-
-```sh
-/path/to/claude-review/scripts/claude_review.rb \
-  --include-repo /absolute/path/to/related-repo \
-  --intent "Review this coordinated change across both repos"
-```
-
-The helper configures a stable per-user Zellij socket automatically and generates collision-safe session names. Use `--doctor` only to check installed dependencies.
-
 Useful options:
 
-- `--include-repo PATH` includes another repo's authority files, status, diff, and eligible untracked text files; repeat as needed.
-- `--plan PATH` supplies a spec or PRD.
-- `--artifact PATH` adds a document or workflow; it becomes artifact-only when the primary worktree is clean.
-- `--base REF` reviews committed branch work.
-- `--dry-run` prints the prompt bundle without launching Claude.
+- `--include-repo PATH` adds another repo's authority, status, diff, and eligible untracked text; repeat as needed.
+- `--plan PATH` supplies a plan or PRD and becomes plan-only when the worktree is clean.
+- `--artifact PATH` supplies a document or workflow and becomes artifact-only when the worktree is clean.
+- `--base REF` reviews committed primary-branch work when no worktree change is available.
+- `--dry-run` prints the bundle without launching Pi.
 
-Claude has read-oriented tools plus Bash under `bypassPermissions`, so use the helper only with trusted local repos. Likely credential files are excluded from untracked-file bundles, but this is not a secrets scanner.
+Pi receives only read-only tools. Likely credential paths are excluded from untracked bundles, but this is not a secrets scanner.
 
 ## Observe
 
-Let the user watch the visible Zellij session. First check the printed done marker after 2-3 minutes, then poll the marker and handoff paths. Read [references/observing-zellij.md](references/observing-zellij.md) only if the run is ambiguous.
-
-Leave the session open for follow-ups. Clean it up only when the user says the review is finished.
+- Let the user watch the visible Pi session. Press Escape to interrupt the current turn, then type a correction and press Enter. Press Ctrl+D only when finished.
+- Poll the printed marker and handoff paths. Marker `0` is complete, `130` is interrupted with Pi still open, `1` is failed, and a missing marker is pending or ambiguous.
+- Treat a visibly working TUI as active even when the marker is missing. If Pi fails or exits ambiguously, report that and ask the user; never relaunch automatically.
+- Leave the session open for follow-ups until the user says it is finished.
 
 ## Verify and Stop
 
-After Claude responds:
+After the latest marker contains `0`:
 
 1. Read the handoff.
-2. Re-check status, diffs, untracked files, and supplied artifacts in every included repo.
-3. Classify each finding as accepted, rejected, or deferred.
-4. Send this checkpoint and stop:
+2. Independently inspect the primary repo, every included repo, and every supplied artifact enough to understand the change and its material risks. Do not merely summarize Kimi.
+3. Verify each finding against the current files and project instructions. Classify it as accepted, rejected, or deferred.
+4. Judge whether Kimi's depth and priorities fit the change. Identify material issues it missed and reject pedantry, speculation, or unnecessary redesign.
+5. Report this checkpoint and stop:
 
 ```md
-Claude found:
+Kimi reported:
 - [short findings]
 
-Codex checked:
-- [what the actual cross-repo diff changes]
+My independent assessment:
+- Actual change: [what it does and its material risks]
+- Review quality: [appropriately scoped, overreaching, incomplete, or mixed]
+- Missed or under-reviewed: [important omissions, or none]
 
-I agree with:
-- [finding]: [why it is real]
+Accepted:
+- [finding]: [why]
 
-I reject or defer:
-- [finding]: [why it is noise, historical, speculative, or out of scope]
+Rejected or deferred:
+- [finding]: [why]
 
 Implementation plan:
 - [smallest edits]
@@ -79,8 +71,8 @@ Implementation plan:
 Waiting for your go-ahead before I edit.
 ```
 
-If nothing is actionable, say so and name any residual risk or test gap.
+If Kimi reports nothing or gives an incomplete answer, say whether your own inspection supports that conclusion. Do not treat the absence of findings as validation by itself.
 
 ## After Approval
 
-Fix only accepted in-scope findings, rerun focused checks, and summarize the result. Use one follow-up Claude review only when the fixes materially change the diff.
+Fix only accepted in-scope findings and rerun focused checks. Use the existing Pi session for a follow-up only when the fixes materially change the review target.

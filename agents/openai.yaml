@@ -1,7 +1,7 @@
 interface:
   display_name: "Claude Review"
-  short_description: "Visible Claude gate for one or more repos"
-  default_prompt: "Use $claude-review to review this change across every affected repo, then verify and checkpoint before editing."
+  short_description: "Single-session interactive Kimi review gate"
+  default_prompt: "Use $claude-review to run one interactive Kimi review, independently assess its findings, and checkpoint before editing."
 
 policy:
   allow_implicit_invocation: false

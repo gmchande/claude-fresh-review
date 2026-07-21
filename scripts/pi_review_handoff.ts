@@ -37,8 +37,8 @@ function atomicWrite(path: string, content: string): void {
 	renameSync(temporaryPath, path);
 }
 
-function clearArtifacts(): void {
-	if (doneMarkerPath) rmSync(doneMarkerPath, { force: true });
+function markRunning(): void {
+	if (doneMarkerPath) atomicWrite(doneMarkerPath, "running\n");
 	if (handoffPath) rmSync(handoffPath, { force: true });
 }
 
@@ -47,7 +47,7 @@ export default function reviewHandoff(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", () => {
 		lastAssistant = undefined;
-		clearArtifacts();
+		markRunning();
 	});
 
 	pi.on("agent_end", (event) => {

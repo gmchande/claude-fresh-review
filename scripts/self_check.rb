@@ -83,11 +83,15 @@ def test_pi_handoff_extension_tracks_interactive_turns
 
     const settle = async (message) => {
       await handlers.agent_start({});
-      const cleared = !existsSync(process.env.PI_REVIEW_HANDOFF_PATH) && !existsSync(process.env.PI_REVIEW_DONE_MARKER_PATH);
+      const running = {
+        handoffCleared: !existsSync(process.env.PI_REVIEW_HANDOFF_PATH),
+        marker: readFileSync(process.env.PI_REVIEW_DONE_MARKER_PATH, "utf8"),
+        markerMode: statSync(process.env.PI_REVIEW_DONE_MARKER_PATH).mode & 0o777,
+      };
       await handlers.agent_end({ messages: message ? [message] : [] });
       await handlers.agent_settled({});
       return {
-        cleared,
+        running,
         handoff: readFileSync(process.env.PI_REVIEW_HANDOFF_PATH, "utf8"),
         marker: readFileSync(process.env.PI_REVIEW_DONE_MARKER_PATH, "utf8"),
       };
@@ -107,17 +111,22 @@ def test_pi_handoff_extension_tracks_interactive_turns
   stdout, stderr, status = Open3.capture3("bun", "-e", script)
   assert(status.success?, "Pi handoff extension should load and run under Bun: #{stderr}")
   result = JSON.parse(stdout)
+  assert(result.dig("first", "running", "marker") == "running\n", "agent start should mark the review running")
+  assert(result.dig("first", "running", "handoffCleared"), "agent start should clear the previous handoff")
+  assert(result.dig("first", "running", "markerMode") == 0o600, "running marker should be mode 0600")
   assert(result.dig("first", "handoff") == "First review\n", "handoff should contain the completed assistant turn")
   assert(result.dig("first", "marker") == "0\n", "completed turn should write status 0")
   assert(result.dig("first", "handoffMode") == 0o600, "handoff should be mode 0600")
   assert(result.dig("first", "markerMode") == 0o600, "done marker should be mode 0600")
-  assert(result.dig("interrupted", "cleared"), "a new turn should clear the previous handoff and marker")
+  assert(result.dig("interrupted", "running", "marker") == "running\n", "an interrupted follow-up should start as running")
+  assert(result.dig("interrupted", "running", "handoffCleared"), "a follow-up should clear the previous handoff")
   assert(result.dig("interrupted", "marker") == "130\n", "Escape-style abort should write status 130")
-  assert(result.dig("truncated", "cleared"), "a follow-up should clear the interrupted marker")
+  assert(result.dig("truncated", "running", "marker") == "running\n", "a follow-up should replace the interrupted marker")
   assert(result.dig("truncated", "marker") == "1\n", "token-limit truncation should not look complete")
   assert_includes(result.dig("truncated", "handoff"), "stop reason length", "truncated handoff")
   assert(result.dig("failed", "marker") == "1\n", "provider error should write status 1")
   assert(result.dig("failed", "handoff").start_with?("quota exceeded"), "provider error should lead the failed handoff")
+  assert(result.dig("final", "running", "marker") == "running\n", "a corrected follow-up should start as running")
   assert(result.dig("final", "handoff") == "Corrected final review\n", "follow-up should replace the handoff")
   assert(result.dig("final", "marker") == "0\n", "completed follow-up should replace status 130 with 0")
 ensure

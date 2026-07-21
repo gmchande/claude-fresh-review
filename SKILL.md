@@ -34,9 +34,9 @@ Pi receives only read-only tools. Likely credential paths are excluded from untr
 
 ## Observe
 
-- Let the user watch the visible Pi session. Press Escape to interrupt the current turn, then type a correction and press Enter. Press Ctrl+D only when finished.
-- Poll the printed marker and handoff paths. Marker `0` is complete, `130` is interrupted with Pi still open, `1` is failed, and a missing marker is pending or ambiguous.
-- Treat a visibly working TUI as active even when the marker is missing. If Pi fails or exits ambiguously, report that and ask the user; never relaunch automatically.
+- Let the user watch the visible Pi session. Press Escape to interrupt the current turn, then type a correction and press Enter. Press Ctrl+D only when finished; it is not needed to produce the handoff.
+- Poll the printed marker and handoff paths. Marker `running` is active, `0` is complete, `130` is interrupted with Pi still open, and `1` is failed. A missing marker is startup, pending, or ambiguous; it is never failure by itself.
+- Treat a visibly working TUI or `running` marker as active. Never use Zellij output obtained inside a sandbox as liveness evidence. If the TUI is gone and the marker remains ambiguous, report that and ask the user; never relaunch automatically.
 - Leave the session open for follow-ups until the user says it is finished.
 
 ## Verify and Stop

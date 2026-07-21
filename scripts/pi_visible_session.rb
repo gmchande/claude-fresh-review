@@ -67,6 +67,7 @@ module PiVisibleSession
     puts "Attach: #{zellij_shell_command("attach", session)}"
     puts "Handoff: #{handoff_path}"
     puts "Marker: #{done_marker_path}"
+    puts "Marker states: running=active; 0=complete; 130=interrupted; 1=failed. Ctrl+D is not needed for handoff."
     puts "Controls: Escape interrupts; Enter sends a follow-up; Ctrl+D exits Pi."
     puts "Never relaunch this review without explicit user approval."
     puts "Cleanup only after the user is finished: #{zellij_shell_command("delete-session", "--force", session)}"
